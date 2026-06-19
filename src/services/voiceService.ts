@@ -1,188 +1,174 @@
 /**
- * Voice Service for Speech Recognition
- * Handles voice input capture and transcription using Web Speech API
+ * Voice Service - Handles speech recognition for the calculator
+ * Phase 1: Basic voice capture and transcription
  */
 
+import { getSpeechRecognition } from '../utils/browserSupport';
+
+export type VoiceServiceState = 'idle' | 'listening' | 'processing' | 'error';
+
 export interface VoiceServiceConfig {
+  language?: string;
   continuous?: boolean;
   interimResults?: boolean;
-  language?: string;
   maxAlternatives?: number;
 }
 
-export interface VoiceTranscript {
-  text: string;
-  isFinal: boolean;
+export interface TranscriptionResult {
+  transcript: string;
   confidence: number;
-  timestamp: number;
+  isFinal: boolean;
+  timestamp: Date;
 }
 
-export type VoiceServiceCallback = (transcript: VoiceTranscript) => void;
-export type VoiceErrorCallback = (error: string, details?: any) => void;
-export type VoiceStateCallback = (isListening: boolean) => void;
+export interface VoiceServiceCallbacks {
+  onStateChange?: (state: VoiceServiceState) => void;
+  onTranscript?: (result: TranscriptionResult) => void;
+  onError?: (error: string) => void;
+  onEnd?: () => void;
+}
 
-class VoiceService {
-  private recognition: any = null;
-  private isListening = false;
-  private onTranscriptCallback: VoiceServiceCallback | null = null;
-  private onErrorCallback: VoiceErrorCallback | null = null;
-  private onStateChangeCallback: VoiceStateCallback | null = null;
+export class VoiceService {
+  private recognition: SpeechRecognition | null = null;
+  private state: VoiceServiceState = 'idle';
+  private callbacks: VoiceServiceCallbacks = {};
   private config: VoiceServiceConfig;
 
   constructor(config: VoiceServiceConfig = {}) {
     this.config = {
-      continuous: false,
-      interimResults: true,
-      language: 'en-US',
-      maxAlternatives: 1,
-      ...config,
+      language: config.language || 'en-US',
+      continuous: config.continuous ?? false,
+      interimResults: config.interimResults ?? true,
+      maxAlternatives: config.maxAlternatives || 1,
     };
 
-    this.initializeRecognition();
+    this.initialize();
   }
 
   /**
-   * Initializes the Speech Recognition instance
+   * Initialize the speech recognition instance
    */
-  private initializeRecognition(): void {
-    const SpeechRecognition = 
-      (window as any).SpeechRecognition || 
-      (window as any).webkitSpeechRecognition;
-
-    if (!SpeechRecognition) {
-      console.error('Speech Recognition API is not supported in this browser');
+  private initialize(): void {
+    const SpeechRecognitionConstructor = getSpeechRecognition();
+    
+    if (!SpeechRecognitionConstructor) {
+      this.setState('error');
+      this.callbacks.onError?.('Speech recognition is not supported in this browser');
       return;
     }
 
-    this.recognition = new SpeechRecognition();
-    this.recognition.continuous = this.config.continuous;
-    this.recognition.interimResults = this.config.interimResults;
-    this.recognition.lang = this.config.language;
-    this.recognition.maxAlternatives = this.config.maxAlternatives;
+    this.recognition = new SpeechRecognitionConstructor();
+    this.recognition.lang = this.config.language!;
+    this.recognition.continuous = this.config.continuous!;
+    this.recognition.interimResults = this.config.interimResults!;
+    this.recognition.maxAlternatives = this.config.maxAlternatives!;
 
-    this.setupEventHandlers();
+    this.setupEventListeners();
   }
 
   /**
-   * Sets up event handlers for the recognition instance
+   * Set up event listeners for speech recognition
    */
-  private setupEventHandlers(): void {
+  private setupEventListeners(): void {
     if (!this.recognition) return;
 
-    // Handle recognition results
-    this.recognition.onresult = (event: any) => {
+    this.recognition.onstart = () => {
+      this.setState('listening');
+    };
+
+    this.recognition.onresult = (event: SpeechRecognitionEvent) => {
       const result = event.results[event.results.length - 1];
       const transcript = result[0].transcript;
-      const isFinal = result.isFinal;
       const confidence = result[0].confidence;
 
-      if (this.onTranscriptCallback) {
-        this.onTranscriptCallback({
-          text: transcript,
-          isFinal,
-          confidence,
-          timestamp: Date.now(),
-        });
-      }
+      const transcriptionResult: TranscriptionResult = {
+        transcript: transcript.trim(),
+        confidence,
+        isFinal: result.isFinal,
+        timestamp: new Date(),
+      };
 
-      // Auto-stop if not continuous and result is final
-      if (isFinal && !this.config.continuous) {
-        this.stop();
-      }
-    };
+      this.callbacks.onTranscript?.(transcriptionResult);
 
-    // Handle recognition errors
-    this.recognition.onerror = (event: any) => {
-      console.error('Speech recognition error:', event.error);
-      
-      if (this.onErrorCallback) {
-        this.onErrorCallback(event.error, event);
-      }
-
-      // Stop listening on error
-      this.isListening = false;
-      if (this.onStateChangeCallback) {
-        this.onStateChangeCallback(false);
+      if (result.isFinal) {
+        this.setState('processing');
       }
     };
 
-    // Handle recognition start
-    this.recognition.onstart = () => {
-      this.isListening = true;
-      if (this.onStateChangeCallback) {
-        this.onStateChangeCallback(true);
+    this.recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+      let errorMessage = 'An error occurred during speech recognition';
+
+      switch (event.error) {
+        case 'no-speech':
+          errorMessage = 'No speech was detected. Please try again.';
+          break;
+        case 'audio-capture':
+          errorMessage = 'No microphone was found. Please check your microphone settings.';
+          break;
+        case 'not-allowed':
+          errorMessage = 'Microphone permission was denied. Please allow microphone access.';
+          break;
+        case 'network':
+          errorMessage = 'A network error occurred. Please check your connection.';
+          break;
+        case 'aborted':
+          errorMessage = 'Speech recognition was aborted.';
+          break;
+        default:
+          errorMessage = `Speech recognition error: ${event.error}`;
       }
+
+      this.setState('error');
+      this.callbacks.onError?.(errorMessage);
     };
 
-    // Handle recognition end
     this.recognition.onend = () => {
-      this.isListening = false;
-      if (this.onStateChangeCallback) {
-        this.onStateChangeCallback(false);
+      if (this.state === 'listening') {
+        this.setState('idle');
       }
-    };
-
-    // Handle no speech detected
-    this.recognition.onspeechend = () => {
-      if (!this.config.continuous) {
-        this.stop();
-      }
-    };
-
-    // Handle audio start
-    this.recognition.onaudiostart = () => {
-      console.log('Audio capture started');
-    };
-
-    // Handle audio end
-    this.recognition.onaudioend = () => {
-      console.log('Audio capture ended');
+      this.callbacks.onEnd?.();
     };
   }
 
   /**
-   * Starts voice recognition
+   * Start listening for voice input
    */
   public start(): void {
     if (!this.recognition) {
-      if (this.onErrorCallback) {
-        this.onErrorCallback('not-supported', { message: 'Speech Recognition is not supported' });
-      }
+      this.callbacks.onError?.('Speech recognition is not initialized');
       return;
     }
 
-    if (this.isListening) {
-      console.warn('Voice recognition is already active');
-      return;
+    if (this.state === 'listening') {
+      return; // Already listening
     }
 
     try {
       this.recognition.start();
     } catch (error) {
-      console.error('Error starting voice recognition:', error);
-      if (this.onErrorCallback) {
-        this.onErrorCallback('start-failed', error);
-      }
+      this.setState('error');
+      this.callbacks.onError?.('Failed to start speech recognition');
     }
   }
 
   /**
-   * Stops voice recognition
+   * Stop listening for voice input
    */
   public stop(): void {
-    if (!this.recognition || !this.isListening) {
+    if (!this.recognition || this.state !== 'listening') {
       return;
     }
 
     try {
       this.recognition.stop();
+      this.setState('idle');
     } catch (error) {
-      console.error('Error stopping voice recognition:', error);
+      console.error('Error stopping speech recognition:', error);
     }
   }
 
   /**
-   * Aborts voice recognition immediately
+   * Abort speech recognition immediately
    */
   public abort(): void {
     if (!this.recognition) {
@@ -191,67 +177,54 @@ class VoiceService {
 
     try {
       this.recognition.abort();
-      this.isListening = false;
-      if (this.onStateChangeCallback) {
-        this.onStateChangeCallback(false);
-      }
+      this.setState('idle');
     } catch (error) {
-      console.error('Error aborting voice recognition:', error);
+      console.error('Error aborting speech recognition:', error);
     }
   }
 
   /**
-   * Registers a callback for transcription results
+   * Set callbacks for voice service events
    */
-  public onTranscript(callback: VoiceServiceCallback): void {
-    this.onTranscriptCallback = callback;
+  public setCallbacks(callbacks: VoiceServiceCallbacks): void {
+    this.callbacks = { ...this.callbacks, ...callbacks };
   }
 
   /**
-   * Registers a callback for errors
+   * Get current state
    */
-  public onError(callback: VoiceErrorCallback): void {
-    this.onErrorCallback = callback;
+  public getState(): VoiceServiceState {
+    return this.state;
   }
 
   /**
-   * Registers a callback for state changes
-   */
-  public onStateChange(callback: VoiceStateCallback): void {
-    this.onStateChangeCallback = callback;
-  }
-
-  /**
-   * Returns whether voice recognition is currently active
-   */
-  public getIsListening(): boolean {
-    return this.isListening;
-  }
-
-  /**
-   * Updates the configuration
+   * Update configuration
    */
   public updateConfig(config: Partial<VoiceServiceConfig>): void {
     this.config = { ...this.config, ...config };
     
     if (this.recognition) {
-      this.recognition.continuous = this.config.continuous;
-      this.recognition.interimResults = this.config.interimResults;
-      this.recognition.lang = this.config.language;
-      this.recognition.maxAlternatives = this.config.maxAlternatives;
+      if (config.language) this.recognition.lang = config.language;
+      if (config.continuous !== undefined) this.recognition.continuous = config.continuous;
+      if (config.interimResults !== undefined) this.recognition.interimResults = config.interimResults;
+      if (config.maxAlternatives !== undefined) this.recognition.maxAlternatives = config.maxAlternatives;
     }
   }
 
   /**
-   * Cleans up the service
+   * Clean up resources
    */
   public destroy(): void {
     this.abort();
-    this.onTranscriptCallback = null;
-    this.onErrorCallback = null;
-    this.onStateChangeCallback = null;
     this.recognition = null;
+    this.callbacks = {};
+  }
+
+  /**
+   * Set the current state and notify callbacks
+   */
+  private setState(state: VoiceServiceState): void {
+    this.state = state;
+    this.callbacks.onStateChange?.(state);
   }
 }
-
-export default VoiceService;
