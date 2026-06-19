@@ -4,6 +4,7 @@ import { checkBrowserSupport, getMicrophoneErrorMessage } from '../utils/browser
 
 interface VoiceButtonProps {
   onTranscript?: (text: string, isFinal: boolean) => void;
+  onStateChange?: (isListening: boolean) => void;
   className?: string;
   disabled?: boolean;
 }
@@ -11,7 +12,8 @@ interface VoiceButtonProps {
 type VoiceState = 'idle' | 'listening' | 'processing' | 'error';
 
 const VoiceButton: React.FC<VoiceButtonProps> = ({ 
-  onTranscript, 
+  onTranscript,
+  onStateChange,
   className = '',
   disabled = false 
 }) => {
@@ -62,7 +64,7 @@ const VoiceButton: React.FC<VoiceButtonProps> = ({
       const message = getMicrophoneErrorMessage(error);
       setErrorMessage(message);
       setVoiceState('error');
-
+      
       // Clear error after 5 seconds
       setTimeout(() => {
         setErrorMessage('');
@@ -71,29 +73,30 @@ const VoiceButton: React.FC<VoiceButtonProps> = ({
     });
 
     voiceService.onStateChange((isListening: boolean) => {
-      if (isListening) {
-        setVoiceState('listening');
-      } else if (voiceState !== 'processing' && voiceState !== 'error') {
-        setVoiceState('idle');
+      setVoiceState(isListening ? 'listening' : 'idle');
+      if (onStateChange) {
+        onStateChange(isListening);
       }
     });
 
     // Cleanup on unmount
     return () => {
       if (voiceServiceRef.current) {
-        voiceServiceRef.current.destroy();
+        voiceServiceRef.current.stop();
       }
     };
-  }, []);
+  }, [onTranscript, onStateChange]);
 
   const handleClick = () => {
     if (!isSupported || disabled || !voiceServiceRef.current) {
       return;
     }
 
-    if (voiceState === 'listening') {
+    const isCurrentlyListening = voiceServiceRef.current.getIsListening();
+
+    if (isCurrentlyListening) {
       voiceServiceRef.current.stop();
-    } else if (voiceState === 'idle' || voiceState === 'processing') {
+    } else {
       setErrorMessage('');
       voiceServiceRef.current.start();
     }
@@ -104,83 +107,72 @@ const VoiceButton: React.FC<VoiceButtonProps> = ({
       case 'listening':
         return (
           <svg className="voice-icon listening" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-            <circle cx="12" cy="12" r="10" className="pulse-ring" />
+            <circle className="pulse-ring" cx="12" cy="12" r="10" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
           </svg>
         );
       case 'processing':
         return (
           <svg className="voice-icon processing" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
           </svg>
         );
       case 'error':
         return (
-          <svg className="voice-icon error" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          <svg className="voice-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
           </svg>
         );
       default:
         return (
-          <svg className="voice-icon idle" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+          <svg className="voice-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
           </svg>
         );
     }
   };
 
-  const getButtonLabel = () => {
+  const getStatusText = () => {
     switch (voiceState) {
       case 'listening':
-        return 'Listening... (click to stop)';
+        return 'Listening...';
       case 'processing':
         return 'Processing...';
       case 'error':
         return 'Error';
       default:
-        return 'Voice Input';
+        return 'Click to speak';
     }
   };
 
-  if (!isSupported) {
-    return (
-      <div className={`voice-button-container unsupported ${className}`}>
-        <button 
-          className="voice-button disabled"
-          disabled
-          title={supportMessage}
-        >
-          <svg className="voice-icon disabled" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-            <line x1="3" y1="3" x2="21" y2="21" strokeWidth={2} />
-          </svg>
-        </button>
-        <div className="voice-support-message">{supportMessage}</div>
-      </div>
-    );
-  }
-
   return (
-    <div className={`voice-button-container ${className}`}>
+    <div className={`voice-button-container ${!isSupported ? 'unsupported' : ''} ${className}`}>
       <button
-        className={`voice-button ${voiceState} ${disabled ? 'disabled' : ''}`}
+        className={`voice-button ${voiceState}`}
         onClick={handleClick}
-        disabled={disabled}
-        title={getButtonLabel()}
-        aria-label={getButtonLabel()}
-        aria-pressed={voiceState === 'listening'}
+        disabled={!isSupported || disabled}
+        aria-label={getStatusText()}
+        title={getStatusText()}
       >
         {getButtonIcon()}
       </button>
+
       {voiceState === 'listening' && (
         <div className="voice-status-indicator">
-          <span className="status-dot"></span>
-          <span className="status-text">Listening...</span>
+          <span className="status-dot" />
+          <span className="status-text">{getStatusText()}</span>
         </div>
       )}
+
       {errorMessage && (
         <div className="voice-error-message" role="alert">
           {errorMessage}
+        </div>
+      )}
+
+      {!isSupported && (
+        <div className="voice-support-message">
+          {supportMessage}
         </div>
       )}
     </div>
