@@ -60,7 +60,7 @@ export const VoiceButton: React.FC<VoiceButtonProps> = ({ onTranscript, classNam
     return () => {
       voiceService.destroy();
     };
-  }, []);
+  }, [voiceService, onTranscript, error]);
 
   const handleClick = async () => {
     if (!isSupported) {
@@ -70,21 +70,22 @@ export const VoiceButton: React.FC<VoiceButtonProps> = ({ onTranscript, classNam
     if (state === 'listening') {
       // Stop listening
       voiceService.stop();
-    } else {
-      // Request permission if needed
-      if (showPermissionPrompt) {
-        const hasPermission = await requestMicrophonePermission();
-        if (!hasPermission) {
-          setError('Microphone permission denied. Please allow access to use voice input.');
-          return;
-        }
-        setShowPermissionPrompt(false);
-      }
-
-      // Start listening
-      setError(null);
-      voiceService.start();
+      return;
     }
+
+    // Request microphone permission
+    setShowPermissionPrompt(true);
+    const hasPermission = await requestMicrophonePermission();
+    setShowPermissionPrompt(false);
+
+    if (!hasPermission) {
+      setError('Microphone access denied. Please allow microphone access in your browser settings.');
+      return;
+    }
+
+    // Start listening
+    setError(null);
+    voiceService.start();
   };
 
   const getButtonClass = () => {
@@ -96,25 +97,28 @@ export const VoiceButton: React.FC<VoiceButtonProps> = ({ onTranscript, classNam
 
   const getButtonTitle = () => {
     if (!isSupported) return 'Voice input not supported in this browser';
-    if (state === 'listening') return 'Stop listening';
-    if (state === 'error') return 'Error - Click to retry';
+    if (state === 'listening') return 'Click to stop listening';
+    if (state === 'processing') return 'Processing...';
+    if (state === 'error') return error || 'Error occurred';
     return 'Click to start voice input';
   };
 
   const renderIcon = () => {
+    if (state === 'listening') {
+      return (
+        <svg viewBox="0 0 24 24" fill="currentColor" className="voice-button-icon">
+          <circle cx="12" cy="12" r="10" className="pulse-ring" />
+          <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" />
+          <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" />
+        </svg>
+      );
+    }
+
     if (state === 'processing') {
       return (
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" className="voice-button-icon">
-          <circle cx="12" cy="12" r="10" strokeWidth="2" strokeLinecap="round" strokeDasharray="60" strokeDashoffset="15">
-            <animateTransform
-              attributeName="transform"
-              type="rotate"
-              from="0 12 12"
-              to="360 12 12"
-              dur="1s"
-              repeatCount="indefinite"
-            />
-          </circle>
+          <circle cx="12" cy="12" r="10" strokeWidth="2" opacity="0.25" />
+          <path d="M12 2a10 10 0 0 1 10 10" strokeWidth="2" strokeLinecap="round" />
         </svg>
       );
     }
@@ -122,19 +126,27 @@ export const VoiceButton: React.FC<VoiceButtonProps> = ({ onTranscript, classNam
     if (state === 'error') {
       return (
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" className="voice-button-icon">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          <circle cx="12" cy="12" r="10" strokeWidth="2" />
+          <path d="M12 8v4m0 4h.01" strokeWidth="2" strokeLinecap="round" />
         </svg>
       );
     }
 
+    // Idle state
     return (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" className="voice-button-icon">
-        {state === 'listening' && (
-          <circle cx="12" cy="12" r="10" className="pulse-ring" />
-        )}
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+      <svg viewBox="0 0 24 24" fill="currentColor" className="voice-button-icon">
+        <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" />
+        <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" />
       </svg>
     );
+  };
+
+  const getStateLabel = () => {
+    if (showPermissionPrompt) return 'Requesting permission...';
+    if (state === 'listening') return 'Listening...';
+    if (state === 'processing') return 'Processing...';
+    if (state === 'error') return 'Error';
+    return 'Click to speak';
   };
 
   return (
@@ -142,22 +154,26 @@ export const VoiceButton: React.FC<VoiceButtonProps> = ({ onTranscript, classNam
       <button
         className={getButtonClass()}
         onClick={handleClick}
-        disabled={!isSupported}
+        disabled={!isSupported || showPermissionPrompt}
         title={getButtonTitle()}
         aria-label={getButtonTitle()}
       >
         {renderIcon()}
       </button>
       
-      {state === 'listening' && currentTranscript && (
-        <div className="voice-button-status">
-          <span className="status-text">{currentTranscript}</span>
+      <div className="voice-button-label">
+        {getStateLabel()}
+      </div>
+
+      {currentTranscript && state === 'listening' && (
+        <div className="voice-button-transcript">
+          "{currentTranscript}"
         </div>
       )}
-      
+
       {error && (
         <div className="voice-button-error">
-          <span className="error-text">{error}</span>
+          {error}
         </div>
       )}
     </div>

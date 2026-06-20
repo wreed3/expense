@@ -37,6 +37,18 @@ export const VoiceTranscriptionDisplay: React.FC<VoiceTranscriptionDisplayProps>
     );
   }
 
+  const formatTime = (date: Date): string => {
+    return date.toLocaleTimeString('en-US', { 
+      hour: '2-digit', 
+      minute: '2-digit', 
+      second: '2-digit' 
+    });
+  };
+
+  const formatConfidence = (confidence: number): string => {
+    return `${Math.round(confidence * 100)}%`;
+  };
+
   return (
     <div className="transcription-display">
       <div className="transcription-header">
@@ -66,11 +78,12 @@ export const VoiceTranscriptionDisplay: React.FC<VoiceTranscriptionDisplayProps>
             
             <div className="entry-metadata">
               <span className="entry-confidence">
-                Confidence: {(entry.confidence * 100).toFixed(0)}%
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="12" height="12">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                {formatConfidence(entry.confidence)}
               </span>
-              <span className="entry-timestamp">
-                {entry.timestamp.toLocaleTimeString()}
-              </span>
+              <span className="entry-timestamp">{formatTime(entry.timestamp)}</span>
             </div>
           </div>
         ))}
