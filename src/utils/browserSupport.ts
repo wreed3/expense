@@ -77,28 +77,10 @@ export function getSpeechRecognition(): typeof SpeechRecognition | null {
 export async function requestMicrophonePermission(): Promise<boolean> {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    // Stop all tracks immediately - we just needed permission
     stream.getTracks().forEach(track => track.stop());
     return true;
   } catch (error) {
     console.error('Microphone permission denied:', error);
     return false;
-  }
-}
-
-/**
- * Check if microphone permission is granted
- */
-export async function checkMicrophonePermission(): Promise<PermissionState | 'unsupported'> {
-  try {
-    if (!navigator.permissions) {
-      return 'unsupported';
-    }
-    
-    const result = await navigator.permissions.query({ name: 'microphone' as PermissionName });
-    return result.state;
-  } catch (error) {
-    console.error('Error checking microphone permission:', error);
-    return 'unsupported';
   }
 }
