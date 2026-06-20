@@ -1,8 +1,3 @@
-/**
- * Voice Button Component
- * Phase 1: Simple button with listening state visualization
- */
-
 import React, { useEffect, useState } from 'react';
 import { VoiceService, VoiceServiceState, TranscriptionResult } from '../services/voiceService';
 import { checkBrowserSupport, requestMicrophonePermission } from '../utils/browserSupport';
@@ -49,7 +44,7 @@ export const VoiceButton: React.FC<VoiceButtonProps> = ({ onTranscript, classNam
         setCurrentTranscript('');
       },
       onEnd: () => {
-        // Optional handling
+        setShowPermissionPrompt(false);
       },
     });
 
@@ -68,61 +63,55 @@ export const VoiceButton: React.FC<VoiceButtonProps> = ({ onTranscript, classNam
       return;
     }
 
+    setShowPermissionPrompt(true);
     const hasPermission = await requestMicrophonePermission();
+    setShowPermissionPrompt(false);
+
     if (!hasPermission) {
-      setError('Microphone permission denied. Please enable microphone access in your browser settings.');
-      setShowPermissionPrompt(true);
+      setError('Microphone permission is required. Please allow access and try again.');
       return;
     }
 
-    setShowPermissionPrompt(false);
     voiceService.start();
   };
 
   const getButtonIcon = () => {
-    switch (state) {
-      case 'listening':
-        return (
-          <svg viewBox="0 0 24 24" fill="currentColor" className="voice-button-icon">
-            <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
-            <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
-          </svg>
-        );
-      case 'processing':
-        return (
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" className="voice-button-icon">
-            <circle cx="12" cy="12" r="10" strokeWidth="2"/>
-            <path d="M12 6v6l4 2" strokeWidth="2" strokeLinecap="round"/>
-          </svg>
-        );
-      case 'error':
-        return (
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" className="voice-button-icon">
-            <circle cx="12" cy="12" r="10" strokeWidth="2"/>
-            <path d="M15 9l-6 6m0-6l6 6" strokeWidth="2" strokeLinecap="round"/>
-          </svg>
-        );
-      default:
-        return (
-          <svg viewBox="0 0 24 24" fill="currentColor" className="voice-button-icon">
-            <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
-            <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
-          </svg>
-        );
+    if (state === 'processing') {
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" className="voice-button-icon">
+          <circle cx="12" cy="12" r="10" strokeWidth="2" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6l4 2" />
+        </svg>
+      );
     }
+
+    if (state === 'listening') {
+      return (
+        <>
+          <svg viewBox="0 0 24 24" fill="currentColor" className="voice-button-icon">
+            <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" />
+            <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" />
+          </svg>
+          <svg viewBox="0 0 32 32" className="pulse-ring-container">
+            <circle cx="16" cy="16" className="pulse-ring" />
+          </svg>
+        </>
+      );
+    }
+
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" className="voice-button-icon">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+      </svg>
+    );
   };
 
-  const getStateLabel = () => {
-    switch (state) {
-      case 'listening':
-        return 'Listening...';
-      case 'processing':
-        return 'Processing...';
-      case 'error':
-        return 'Error';
-      default:
-        return 'Click to speak';
-    }
+  const getStatusText = () => {
+    if (showPermissionPrompt) return 'Requesting permission...';
+    if (state === 'listening') return 'Listening...';
+    if (state === 'processing') return 'Processing...';
+    if (state === 'error') return error || 'Error';
+    return 'Click to speak';
   };
 
   return (
@@ -130,39 +119,26 @@ export const VoiceButton: React.FC<VoiceButtonProps> = ({ onTranscript, classNam
       <button
         className={`voice-button ${state} ${!isSupported ? 'disabled' : ''}`}
         onClick={handleClick}
-        disabled={!isSupported}
-        title={getStateLabel()}
-        aria-label={getStateLabel()}
+        disabled={!isSupported || showPermissionPrompt}
+        title={getStatusText()}
+        aria-label={getStatusText()}
       >
-        {state === 'listening' && (
-          <svg className="pulse-ring-container" viewBox="0 0 24 24">
-            <circle className="pulse-ring" cx="12" cy="12" r="10" />
-          </svg>
-        )}
         {getButtonIcon()}
       </button>
+      
+      <span className={`voice-status ${state}`}>
+        {getStatusText()}
+      </span>
 
-      {state === 'listening' && currentTranscript && (
+      {currentTranscript && state === 'listening' && (
         <div className="current-transcript">
           {currentTranscript}
         </div>
       )}
 
       {error && (
-        <div className="voice-error-message">
+        <div className="voice-error">
           {error}
-        </div>
-      )}
-
-      {showPermissionPrompt && (
-        <div className="permission-prompt">
-          <p>Please allow microphone access to use voice input</p>
-        </div>
-      )}
-
-      {!isSupported && (
-        <div className="browser-warning">
-          <p>Voice input not supported in this browser</p>
         </div>
       )}
     </div>
