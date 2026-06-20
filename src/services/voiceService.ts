@@ -73,58 +73,48 @@ export class VoiceService {
     if (!this.recognition) return;
 
     this.recognition.onstart = () => {
-      console.log('Voice recognition started');
       this.setState('listening');
     };
 
     this.recognition.onresult = (event: SpeechRecognitionEvent) => {
-      this.setState('processing');
+      const result = event.results[event.results.length - 1];
+      const transcript = result[0].transcript;
+      const confidence = result[0].confidence;
+      const isFinal = result.isFinal;
 
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const result = event.results[i];
-        const transcript = result[0].transcript;
-        const confidence = result[0].confidence;
-        const isFinal = result.isFinal;
+      this.callbacks.onTranscript?.({
+        transcript,
+        confidence,
+        isFinal,
+        timestamp: new Date(),
+      });
 
-        console.log(`Transcript: "${transcript}" (confidence: ${confidence}, final: ${isFinal})`);
-
-        this.callbacks.onTranscript?.({
-          transcript,
-          confidence,
-          isFinal,
-          timestamp: new Date(),
-        });
-      }
-
-      // Return to listening state if continuous mode
-      if (this.config.continuous) {
-        this.setState('listening');
+      if (isFinal) {
+        this.setState('processing');
       }
     };
 
     this.recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-      console.error('Voice recognition error:', event.error);
-      
-      let errorMessage = 'An error occurred with voice recognition';
-      
+      let errorMessage = 'An error occurred during speech recognition';
+
       switch (event.error) {
         case 'no-speech':
           errorMessage = 'No speech detected. Please try again.';
           break;
         case 'audio-capture':
-          errorMessage = 'No microphone detected. Please check your audio settings.';
+          errorMessage = 'Microphone not accessible. Please check permissions.';
           break;
         case 'not-allowed':
-          errorMessage = 'Microphone access denied. Please allow microphone access.';
+          errorMessage = 'Microphone permission denied.';
           break;
         case 'network':
-          errorMessage = 'Network error. Please check your internet connection.';
+          errorMessage = 'Network error. Please check your connection.';
           break;
         case 'aborted':
-          errorMessage = 'Voice recognition was aborted.';
+          errorMessage = 'Speech recognition was aborted.';
           break;
         default:
-          errorMessage = `Voice recognition error: ${event.error}`;
+          errorMessage = `Speech recognition error: ${event.error}`;
       }
 
       this.setState('error');
@@ -132,69 +122,68 @@ export class VoiceService {
     };
 
     this.recognition.onend = () => {
-      console.log('Voice recognition ended');
-      
-      // Only set to idle if not in error state
-      if (this.state !== 'error') {
+      if (this.state === 'listening') {
         this.setState('idle');
       }
-      
       this.callbacks.onEnd?.();
     };
   }
 
   /**
-   * Start voice recognition
+   * Start listening for voice input
    */
   public start(): void {
     if (!this.recognition) {
-      this.callbacks.onError?.('Speech recognition is not available');
+      this.callbacks.onError?.('Speech recognition not initialized');
       return;
     }
 
     if (this.state === 'listening') {
-      console.warn('Voice recognition is already active');
       return;
     }
 
     try {
       this.recognition.start();
     } catch (error) {
-      console.error('Error starting voice recognition:', error);
+      this.callbacks.onError?.('Failed to start speech recognition');
       this.setState('error');
-      this.callbacks.onError?.('Failed to start voice recognition');
     }
   }
 
   /**
-   * Stop voice recognition
+   * Stop listening for voice input
    */
   public stop(): void {
     if (!this.recognition) return;
 
     try {
       this.recognition.stop();
-    } catch (error) {
-      console.error('Error stopping voice recognition:', error);
-    }
-  }
-
-  /**
-   * Abort voice recognition immediately
-   */
-  public abort(): void {
-    if (!this.recognition) return;
-
-    try {
-      this.recognition.abort();
       this.setState('idle');
     } catch (error) {
-      console.error('Error aborting voice recognition:', error);
+      console.error('Error stopping recognition:', error);
     }
   }
 
   /**
-   * Set callbacks for voice recognition events
+   * Toggle listening state
+   */
+  public toggle(): void {
+    if (this.state === 'listening') {
+      this.stop();
+    } else {
+      this.start();
+    }
+  }
+
+  /**
+   * Get current state
+   */
+  public getState(): VoiceServiceState {
+    return this.state;
+  }
+
+  /**
+   * Set callbacks
    */
   public setCallbacks(callbacks: VoiceServiceCallbacks): void {
     this.callbacks = { ...this.callbacks, ...callbacks };
@@ -215,28 +204,21 @@ export class VoiceService {
   }
 
   /**
-   * Get current state
+   * Clean up and destroy the service
    */
-  public getState(): VoiceServiceState {
-    return this.state;
+  public destroy(): void {
+    this.stop();
+    this.recognition = null;
+    this.callbacks = {};
   }
 
   /**
-   * Set state and notify callbacks
+   * Set internal state and notify callbacks
    */
   private setState(newState: VoiceServiceState): void {
     if (this.state !== newState) {
       this.state = newState;
       this.callbacks.onStateChange?.(newState);
     }
-  }
-
-  /**
-   * Clean up resources
-   */
-  public destroy(): void {
-    this.abort();
-    this.recognition = null;
-    this.callbacks = {};
   }
 }
