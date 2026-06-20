@@ -128,37 +128,49 @@
 }
 
 /* Status text */
-.voice-status {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.5rem;
-  animation: fadeIn 0.3s ease-in;
+.voice-button-status {
+  position: absolute;
+  top: 100%;
+  margin-top: 0.5rem;
+  padding: 0.5rem 1rem;
+  background: rgba(74, 144, 226, 0.1);
+  border: 1px solid rgba(74, 144, 226, 0.3);
+  border-radius: 8px;
+  max-width: 300px;
+  text-align: center;
+  animation: fadeIn 0.2s ease-in;
 }
 
-.voice-status-text {
+.status-text {
+  font-size: 0.875rem;
+  color: #4a90e2;
+  font-weight: 500;
+}
+
+/* Error message */
+.voice-button-error {
+  position: absolute;
+  top: 100%;
+  margin-top: 0.5rem;
+  padding: 0.5rem 1rem;
+  background: rgba(231, 76, 60, 0.1);
+  border: 1px solid rgba(231, 76, 60, 0.3);
+  border-radius: 8px;
+  max-width: 300px;
+  text-align: center;
+  animation: fadeIn 0.2s ease-in;
+}
+
+.error-text {
   font-size: 0.875rem;
   color: #e74c3c;
   font-weight: 500;
 }
 
-/* Transcript preview */
-.voice-transcript-preview {
-  max-width: 300px;
-  padding: 0.5rem 1rem;
-  background: #f5f5f5;
-  border-radius: 8px;
-  font-size: 0.875rem;
-  color: #333;
-  text-align: center;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-  animation: slideUp 0.3s ease-out;
-}
-
-@keyframes slideUp {
+@keyframes fadeIn {
   from {
     opacity: 0;
-    transform: translateY(10px);
+    transform: translateY(-5px);
   }
   to {
     opacity: 1;
@@ -166,53 +178,8 @@
   }
 }
 
-/* Error message */
-.voice-error-message {
-  max-width: 300px;
-  padding: 0.75rem 1rem;
-  background: #ffebee;
-  border: 1px solid #e74c3c;
-  border-radius: 8px;
-  font-size: 0.875rem;
-  color: #c62828;
-  text-align: center;
-  animation: fadeIn 0.3s ease-in;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.permission-retry-button {
-  padding: 0.5rem 1rem;
-  background: #e74c3c;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  font-size: 0.875rem;
-  cursor: pointer;
-  transition: background 0.2s ease;
-}
-
-.permission-retry-button:hover {
-  background: #c62828;
-}
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-/* Unsupported state */
-.voice-button-container.unsupported {
-  opacity: 0.6;
-}
-
 /* Responsive adjustments */
-@media (max-width: 640px) {
+@media (max-width: 768px) {
   .voice-button {
     width: 48px;
     height: 48px;
@@ -223,8 +190,8 @@
     height: 24px;
   }
 
-  .voice-transcript-preview,
-  .voice-error-message {
+  .voice-button-status,
+  .voice-button-error {
     max-width: 250px;
     font-size: 0.8125rem;
   }

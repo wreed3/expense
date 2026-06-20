@@ -77,21 +77,19 @@ export class VoiceService {
     };
 
     this.recognition.onresult = (event: SpeechRecognitionEvent) => {
-      const result = event.results[event.results.length - 1];
-      const transcript = result[0].transcript;
-      const confidence = result[0].confidence;
+      const results = event.results;
+      const lastResult = results[results.length - 1];
+      
+      if (lastResult) {
+        const alternative = lastResult[0];
+        const result: TranscriptionResult = {
+          transcript: alternative.transcript,
+          confidence: alternative.confidence,
+          isFinal: lastResult.isFinal,
+          timestamp: new Date(),
+        };
 
-      const transcriptionResult: TranscriptionResult = {
-        transcript: transcript.trim(),
-        confidence,
-        isFinal: result.isFinal,
-        timestamp: new Date(),
-      };
-
-      this.callbacks.onTranscript?.(transcriptionResult);
-
-      if (result.isFinal) {
-        this.setState('processing');
+        this.callbacks.onTranscript?.(result);
       }
     };
 
@@ -100,16 +98,16 @@ export class VoiceService {
 
       switch (event.error) {
         case 'no-speech':
-          errorMessage = 'No speech was detected. Please try again.';
+          errorMessage = 'No speech detected. Please try again.';
           break;
         case 'audio-capture':
-          errorMessage = 'No microphone was found. Please check your microphone settings.';
+          errorMessage = 'No microphone found or microphone access denied.';
           break;
         case 'not-allowed':
-          errorMessage = 'Microphone permission was denied. Please allow microphone access.';
+          errorMessage = 'Microphone access denied. Please allow microphone access.';
           break;
         case 'network':
-          errorMessage = 'A network error occurred. Please check your connection.';
+          errorMessage = 'Network error occurred. Please check your connection.';
           break;
         case 'aborted':
           errorMessage = 'Speech recognition was aborted.';
@@ -123,15 +121,21 @@ export class VoiceService {
     };
 
     this.recognition.onend = () => {
-      if (this.state === 'listening') {
-        this.setState('idle');
-      }
+      this.setState('idle');
       this.callbacks.onEnd?.();
     };
   }
 
   /**
-   * Start listening for voice input
+   * Set the state and notify listeners
+   */
+  private setState(newState: VoiceServiceState): void {
+    this.state = newState;
+    this.callbacks.onStateChange?.(newState);
+  }
+
+  /**
+   * Start listening for speech
    */
   public start(): void {
     if (!this.recognition) {
@@ -140,30 +144,26 @@ export class VoiceService {
     }
 
     if (this.state === 'listening') {
-      return; // Already listening
+      console.warn('Already listening');
+      return;
     }
 
     try {
       this.recognition.start();
     } catch (error) {
-      this.setState('error');
+      console.error('Error starting speech recognition:', error);
       this.callbacks.onError?.('Failed to start speech recognition');
     }
   }
 
   /**
-   * Stop listening for voice input
+   * Stop listening for speech
    */
   public stop(): void {
-    if (!this.recognition || this.state !== 'listening') {
-      return;
-    }
+    if (!this.recognition) return;
 
-    try {
+    if (this.state === 'listening') {
       this.recognition.stop();
-      this.setState('idle');
-    } catch (error) {
-      console.error('Error stopping speech recognition:', error);
     }
   }
 
@@ -171,16 +171,15 @@ export class VoiceService {
    * Abort speech recognition immediately
    */
   public abort(): void {
-    if (!this.recognition) {
-      return;
-    }
+    if (!this.recognition) return;
+    this.recognition.abort();
+  }
 
-    try {
-      this.recognition.abort();
-      this.setState('idle');
-    } catch (error) {
-      console.error('Error aborting speech recognition:', error);
-    }
+  /**
+   * Get the current state
+   */
+  public getState(): VoiceServiceState {
+    return this.state;
   }
 
   /**
@@ -188,13 +187,6 @@ export class VoiceService {
    */
   public setCallbacks(callbacks: VoiceServiceCallbacks): void {
     this.callbacks = { ...this.callbacks, ...callbacks };
-  }
-
-  /**
-   * Get current state
-   */
-  public getState(): VoiceServiceState {
-    return this.state;
   }
 
   /**
@@ -218,13 +210,5 @@ export class VoiceService {
     this.abort();
     this.recognition = null;
     this.callbacks = {};
-  }
-
-  /**
-   * Set the current state and notify callbacks
-   */
-  private setState(state: VoiceServiceState): void {
-    this.state = state;
-    this.callbacks.onStateChange?.(state);
   }
 }
