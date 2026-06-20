@@ -59,15 +59,16 @@ export const VoiceTranscriptionDisplay: React.FC<VoiceTranscriptionDisplayProps>
           >
             <div className="entry-content">
               <span className="entry-transcript">{entry.transcript}</span>
-              <span className="entry-badge">
+              <span className={`entry-badge ${entry.isFinal ? 'final' : 'interim'}`}>
                 {entry.isFinal ? 'Final' : 'Interim'}
               </span>
             </div>
-            <div className="entry-meta">
+            
+            <div className="entry-metadata">
               <span className="entry-confidence">
                 Confidence: {(entry.confidence * 100).toFixed(0)}%
               </span>
-              <span className="entry-time">
+              <span className="entry-timestamp">
                 {entry.timestamp.toLocaleTimeString()}
               </span>
             </div>
