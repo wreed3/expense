@@ -1,13 +1,15 @@
 /**
  * Number Parser - Converts spoken number words to digits
- * Phase 2: Basic Number Recognition
+ * Phase 3: Enhanced Number Recognition
  * 
  * Supports:
- * - Numbers 0-99
- * - Basic number words (zero through ninety-nine)
+ * - Numbers 0-999,999,999 (up to hundreds of millions)
+ * - Decimals (e.g., "three point five")
+ * - Negative numbers (e.g., "negative ten", "minus five")
+ * - Compound numbers (e.g., "three hundred fifty two")
  */
 
-// Number word mappings
+// Basic number word mappings
 const ONES: Record<string, number> = {
   'zero': 0,
   'one': 1,
@@ -45,6 +47,12 @@ const TENS: Record<string, number> = {
   'ninety': 90,
 };
 
+const SCALES: Record<string, number> = {
+  'hundred': 100,
+  'thousand': 1000,
+  'million': 1000000,
+};
+
 // Common homophones and variations
 const HOMOPHONES: Record<string, string> = {
   'to': 'two',
@@ -53,7 +61,15 @@ const HOMOPHONES: Record<string, string> = {
   'fore': 'four',
   'ate': 'eight',
   'won': 'one',
+  'a': 'one',
+  'an': 'one',
 };
+
+// Decimal point indicators
+const DECIMAL_INDICATORS = ['point', 'dot', 'decimal'];
+
+// Negative indicators
+const NEGATIVE_INDICATORS = ['negative', 'minus', 'neg'];
 
 /**
  * Normalize a word by handling homophones and variations
@@ -71,14 +87,29 @@ export function isNumberWord(word: string): boolean {
   return (
     normalized in ONES ||
     normalized in TEENS ||
-    normalized in TENS
+    normalized in TENS ||
+    normalized in SCALES
   );
 }
 
 /**
- * Parse a single number word to its digit value
+ * Check if a word is a decimal indicator
  */
-export function parseNumberWord(word: string): number | null {
+function isDecimalIndicator(word: string): boolean {
+  return DECIMAL_INDICATORS.includes(word.toLowerCase());
+}
+
+/**
+ * Check if a word is a negative indicator
+ */
+function isNegativeIndicator(word: string): boolean {
+  return NEGATIVE_INDICATORS.includes(word.toLowerCase());
+}
+
+/**
+ * Parse a single basic number word (0-99)
+ */
+function parseBasicNumber(word: string): number | null {
   const normalized = normalizeWord(word);
 
   if (normalized in ONES) {
@@ -97,165 +128,296 @@ export function parseNumberWord(word: string): number | null {
 }
 
 /**
- * Parse compound number words (e.g., "twenty three" -> 23)
+ * Parse compound number words with scales (hundreds, thousands, millions)
+ * Example: "three hundred fifty two" -> 352
+ * Example: "five thousand four hundred" -> 5400
+ * Example: "two million three hundred thousand" -> 2300000
  */
-export function parseCompoundNumber(words: string[]): number | null {
+export function parseComplexNumber(words: string[]): number | null {
   if (words.length === 0) {
     return null;
   }
 
+  // Handle single word numbers
   if (words.length === 1) {
-    return parseNumberWord(words[0]);
+    return parseBasicNumber(words[0]);
   }
 
-  // Handle two-word numbers like "twenty three"
-  if (words.length === 2) {
-    const first = normalizeWord(words[0]);
-    const second = normalizeWord(words[1]);
+  let total = 0;
+  let current = 0;
+  let i = 0;
 
-    // Check if first word is a tens value
-    if (first in TENS) {
-      const tensValue = TENS[first];
+  while (i < words.length) {
+    const word = normalizeWord(words[i]);
+
+    // Check for scale words (hundred, thousand, million)
+    if (word in SCALES) {
+      const scale = SCALES[word];
       
-      // Check if second word is a ones value
-      if (second in ONES) {
-        const onesValue = ONES[second];
-        return tensValue + onesValue;
+      if (current === 0) {
+        current = 1; // "hundred" means "one hundred"
       }
+      
+      current *= scale;
+      
+      // For million and thousand, add to total and reset current
+      if (scale >= 1000) {
+        total += current;
+        current = 0;
+      }
+      
+      i++;
+      continue;
     }
+
+    // Check for basic numbers
+    const basicNum = parseBasicNumber(word);
+    if (basicNum !== null) {
+      current += basicNum;
+      i++;
+      continue;
+    }
+
+    // Skip "and" connector
+    if (word === 'and') {
+      i++;
+      continue;
+    }
+
+    // Unknown word, try to continue
+    i++;
   }
 
-  return null;
+  return total + current;
 }
 
 /**
- * Convert a transcript segment to a number
- * Handles multi-word numbers like "twenty three"
+ * Parse decimal numbers
+ * Example: "three point five" -> 3.5
+ * Example: "twenty five point nine nine" -> 25.99
+ * Example: "point five" -> 0.5
  */
-export function transcriptToNumber(transcript: string): number | null {
-  const words = transcript.toLowerCase().trim().split(/\s+/);
+function parseDecimalNumber(words: string[]): number | null {
+  // Find decimal indicator
+  const decimalIndex = words.findIndex(w => isDecimalIndicator(w));
   
-  // Try parsing as compound number first
-  const compoundResult = parseCompoundNumber(words);
-  if (compoundResult !== null) {
-    return compoundResult;
+  if (decimalIndex === -1) {
+    // No decimal point, parse as regular number
+    return parseComplexNumber(words);
   }
 
-  // Try parsing first word as single number
-  if (words.length > 0) {
-    return parseNumberWord(words[0]);
+  // Split into integer and decimal parts
+  const integerWords = words.slice(0, decimalIndex);
+  const decimalWords = words.slice(decimalIndex + 1);
+
+  // Parse integer part (or default to 0 if empty)
+  const integerPart = integerWords.length > 0 
+    ? parseComplexNumber(integerWords) 
+    : 0;
+
+  if (integerPart === null) {
+    return null;
   }
 
-  return null;
+  // Parse decimal part
+  if (decimalWords.length === 0) {
+    return integerPart;
+  }
+
+  // For decimals, parse each digit individually
+  let decimalString = '';
+  for (const word of decimalWords) {
+    const digit = parseBasicNumber(word);
+    if (digit !== null && digit >= 0 && digit <= 9) {
+      decimalString += digit.toString();
+    }
+  }
+
+  if (decimalString.length === 0) {
+    return integerPart;
+  }
+
+  // Combine integer and decimal parts
+  const decimalValue = parseFloat(`${integerPart}.${decimalString}`);
+  return isNaN(decimalValue) ? null : decimalValue;
 }
 
 /**
  * Extract all numbers from a transcript
- * Returns array of { value, startIndex, endIndex, originalText }
  */
 export interface ExtractedNumber {
   value: number;
   startIndex: number;
   endIndex: number;
-  originalText: string;
+  words: string[];
 }
 
 export function extractNumbers(transcript: string): ExtractedNumber[] {
   const words = transcript.toLowerCase().split(/\s+/);
-  const results: ExtractedNumber[] = [];
+  const numbers: ExtractedNumber[] = [];
   let i = 0;
 
   while (i < words.length) {
-    // Try two-word compound number
-    if (i < words.length - 1) {
-      const twoWords = [words[i], words[i + 1]];
-      const compoundValue = parseCompoundNumber(twoWords);
-      
-      if (compoundValue !== null) {
-        results.push({
-          value: compoundValue,
-          startIndex: i,
-          endIndex: i + 1,
-          originalText: `${words[i]} ${words[i + 1]}`,
-        });
-        i += 2;
-        continue;
+    // Check for negative indicator
+    let isNegative = false;
+    if (isNegativeIndicator(words[i])) {
+      isNegative = true;
+      i++;
+    }
+
+    // Try to parse a number starting at this position
+    let j = i;
+    let foundNumber = false;
+
+    // Try increasingly longer sequences
+    while (j < words.length) {
+      const sequence = words.slice(i, j + 1);
+      const value = parseDecimalNumber(sequence);
+
+      if (value !== null) {
+        foundNumber = true;
+        j++;
+      } else if (foundNumber) {
+        // We had a valid number, but adding more words broke it
+        break;
+      } else {
+        // Not a number yet, but might become one with more words
+        const word = normalizeWord(words[j]);
+        if (isNumberWord(word) || isDecimalIndicator(word) || word === 'and') {
+          j++;
+        } else {
+          break;
+        }
       }
     }
 
-    // Try single word number
-    const singleValue = parseNumberWord(words[i]);
-    if (singleValue !== null) {
-      results.push({
-        value: singleValue,
-        startIndex: i,
-        endIndex: i,
-        originalText: words[i],
-      });
-      i += 1;
-      continue;
+    if (foundNumber) {
+      const sequence = words.slice(i, j);
+      const value = parseDecimalNumber(sequence);
+      
+      if (value !== null) {
+        numbers.push({
+          value: isNegative ? -value : value,
+          startIndex: isNegative ? i - 1 : i,
+          endIndex: j - 1,
+          words: isNegative ? [words[i - 1], ...sequence] : sequence,
+        });
+      }
+      
+      i = j;
+    } else {
+      i++;
     }
-
-    i += 1;
   }
 
-  return results;
+  return numbers;
 }
 
 /**
- * Get all supported number words for help/documentation
+ * Parse a number from a string (handles various formats)
+ */
+export function parseNumber(text: string): number | null {
+  const words = text.toLowerCase().trim().split(/\s+/);
+  
+  // Check for negative
+  let isNegative = false;
+  let startIndex = 0;
+  
+  if (words.length > 0 && isNegativeIndicator(words[0])) {
+    isNegative = true;
+    startIndex = 1;
+  }
+
+  const numberWords = words.slice(startIndex);
+  const value = parseDecimalNumber(numberWords);
+
+  if (value === null) {
+    return null;
+  }
+
+  return isNegative ? -value : value;
+}
+
+/**
+ * Get supported number words for documentation
  */
 export function getSupportedNumberWords(): string[] {
   return [
     ...Object.keys(ONES),
     ...Object.keys(TEENS),
     ...Object.keys(TENS),
-  ].sort();
+    ...Object.keys(SCALES),
+    ...DECIMAL_INDICATORS,
+    ...NEGATIVE_INDICATORS,
+  ];
 }
 
 /**
  * Format a number as words (reverse operation)
- * Useful for confirmation and feedback
  */
-export function numberToWords(num: number): string | null {
-  if (num < 0 || num > 99 || !Number.isInteger(num)) {
-    return null;
+export function numberToWords(num: number): string {
+  if (num === 0) return 'zero';
+
+  let isNegative = num < 0;
+  num = Math.abs(num);
+
+  // Handle decimals
+  if (!Number.isInteger(num)) {
+    const [intPart, decPart] = num.toString().split('.');
+    const intWords = numberToWords(parseInt(intPart));
+    const decWords = decPart.split('').map(d => numberToWords(parseInt(d))).join(' ');
+    const result = `${intWords} point ${decWords}`;
+    return isNegative ? `negative ${result}` : result;
   }
 
-  // Handle 0-9
-  for (const [word, value] of Object.entries(ONES)) {
-    if (value === num) {
-      return word;
+  const words: string[] = [];
+
+  // Millions
+  if (num >= 1000000) {
+    const millions = Math.floor(num / 1000000);
+    words.push(numberToWords(millions), 'million');
+    num %= 1000000;
+  }
+
+  // Thousands
+  if (num >= 1000) {
+    const thousands = Math.floor(num / 1000);
+    words.push(numberToWords(thousands), 'thousand');
+    num %= 1000;
+  }
+
+  // Hundreds
+  if (num >= 100) {
+    const hundreds = Math.floor(num / 100);
+    words.push(numberToWords(hundreds), 'hundred');
+    num %= 100;
+  }
+
+  // Tens and ones
+  if (num >= 20) {
+    const tensDigit = Math.floor(num / 10);
+    const tensWords = Object.entries(TENS).find(([_, v]) => v === tensDigit * 10)?.[0];
+    if (tensWords) {
+      words.push(tensWords);
+    }
+    num %= 10;
+  }
+
+  if (num >= 10 && num < 20) {
+    const teensWords = Object.entries(TEENS).find(([_, v]) => v === num)?.[0];
+    if (teensWords) {
+      words.push(teensWords);
+    }
+    num = 0;
+  }
+
+  if (num > 0 && num < 10) {
+    const onesWords = Object.entries(ONES).find(([_, v]) => v === num)?.[0];
+    if (onesWords) {
+      words.push(onesWords);
     }
   }
 
-  // Handle 10-19
-  for (const [word, value] of Object.entries(TEENS)) {
-    if (value === num) {
-      return word;
-    }
-  }
-
-  // Handle 20, 30, 40, etc.
-  for (const [word, value] of Object.entries(TENS)) {
-    if (value === num) {
-      return word;
-    }
-  }
-
-  // Handle compound numbers (21-99)
-  const tensDigit = Math.floor(num / 10) * 10;
-  const onesDigit = num % 10;
-
-  for (const [tensWord, tensValue] of Object.entries(TENS)) {
-    if (tensValue === tensDigit) {
-      for (const [onesWord, onesValue] of Object.entries(ONES)) {
-        if (onesValue === onesDigit) {
-          return `${tensWord} ${onesWord}`;
-        }
-      }
-    }
-  }
-
-  return null;
+  const result = words.join(' ');
+  return isNegative ? `negative ${result}` : result;
 }

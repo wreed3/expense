@@ -1,13 +1,16 @@
 /**
  * Math Parser - Converts spoken math expressions to calculator operations
- * Phase 2: Basic Number Recognition
+ * Phase 3: Enhanced to support larger numbers, decimals, and negatives
  * 
  * Supports:
  * - Basic operators: +, -, ×, ÷
- * - Simple expressions like "five plus three"
+ * - Large numbers (hundreds, thousands, millions)
+ * - Decimal numbers (e.g., "three point five")
+ * - Negative numbers (e.g., "negative ten")
+ * - Simple expressions like "five hundred plus three point five"
  */
 
-import { extractNumbers, ExtractedNumber } from './numberParser';
+import { extractNumbers, parseNumber, ExtractedNumber } from './numberParser';
 
 // Operator mappings
 const OPERATORS: Record<string, string> = {
@@ -25,7 +28,7 @@ const OPERATORS: Record<string, string> = {
   'over': '÷',
 };
 
-// Operator variations for better matching
+// Operator patterns for better matching
 const OPERATOR_PATTERNS: Array<{ pattern: RegExp; operator: string }> = [
   { pattern: /\bplus\b/i, operator: '+' },
   { pattern: /\badd\b/i, operator: '+' },
@@ -48,6 +51,12 @@ export interface ParsedExpression {
   errorMessage?: string;
 }
 
+export interface CalculationResult {
+  expression: string;
+  result: number | null;
+  error?: string;
+}
+
 /**
  * Extract operator from transcript
  */
@@ -65,21 +74,21 @@ function extractOperator(transcript: string): string | null {
 
 /**
  * Parse a simple math expression from spoken words
- * Example: "five plus three" -> { expression: "5 + 3", numbers: [5, 3], operators: ['+'] }
+ * Example: "five hundred plus three point five" -> { expression: "500 + 3.5", numbers: [500, 3.5], operators: ['+'] }
  */
 export function parseMathExpression(transcript: string): ParsedExpression {
   const normalized = transcript.toLowerCase().trim();
 
   // Extract numbers from transcript
   const extractedNumbers = extractNumbers(normalized);
-  
+
   if (extractedNumbers.length === 0) {
     return {
       expression: '',
       numbers: [],
       operators: [],
       isValid: false,
-      errorMessage: 'No numbers detected in expression',
+      errorMessage: 'No numbers found in expression',
     };
   }
 
@@ -87,11 +96,12 @@ export function parseMathExpression(transcript: string): ParsedExpression {
   const operator = extractOperator(normalized);
 
   if (!operator) {
-    // If only one number and no operator, it's just a number
+    // If only one number and no operator, it's valid (just a number)
     if (extractedNumbers.length === 1) {
+      const num = extractedNumbers[0].value;
       return {
-        expression: extractedNumbers[0].value.toString(),
-        numbers: [extractedNumbers[0].value],
+        expression: formatNumber(num),
+        numbers: [num],
         operators: [],
         isValid: true,
       };
@@ -102,54 +112,48 @@ export function parseMathExpression(transcript: string): ParsedExpression {
       numbers: extractedNumbers.map(n => n.value),
       operators: [],
       isValid: false,
-      errorMessage: 'No operator detected in expression',
+      errorMessage: 'No operator found in expression',
     };
   }
 
-  // For Phase 2, we only support simple two-number expressions
-  if (extractedNumbers.length === 1) {
+  // For now, support only two numbers
+  if (extractedNumbers.length !== 2) {
     return {
       expression: '',
-      numbers: [extractedNumbers[0].value],
+      numbers: extractedNumbers.map(n => n.value),
       operators: [operator],
       isValid: false,
-      errorMessage: 'Expression requires two numbers',
+      errorMessage: `Expected 2 numbers for operation, found ${extractedNumbers.length}`,
     };
   }
 
-  if (extractedNumbers.length > 2) {
-    // Take first two numbers for now
-    const firstTwo = extractedNumbers.slice(0, 2);
-    return {
-      expression: `${firstTwo[0].value} ${operator} ${firstTwo[1].value}`,
-      numbers: firstTwo.map(n => n.value),
-      operators: [operator],
-      isValid: true,
-    };
-  }
-
-  // Build expression string
-  const expression = `${extractedNumbers[0].value} ${operator} ${extractedNumbers[1].value}`;
+  const [num1, num2] = extractedNumbers.map(n => n.value);
+  const expression = `${formatNumber(num1)} ${operator} ${formatNumber(num2)}`;
 
   return {
     expression,
-    numbers: extractedNumbers.map(n => n.value),
+    numbers: [num1, num2],
     operators: [operator],
     isValid: true,
   };
 }
 
 /**
- * Calculate the result of a parsed expression
+ * Format a number for display (handle decimals nicely)
  */
-export function calculateExpression(parsed: ParsedExpression): number | null {
-  if (!parsed.isValid || parsed.numbers.length < 2 || parsed.operators.length < 1) {
-    return null;
+function formatNumber(num: number): string {
+  if (Number.isInteger(num)) {
+    return num.toString();
   }
+  
+  // Round to 2 decimal places for display
+  return num.toFixed(2).replace(/\.?0+$/, '');
+}
 
-  const [num1, num2] = parsed.numbers;
-  const operator = parsed.operators[0];
-
+/**
+ * Calculate the result of a simple expression
+ */
+export function calculateExpression(num1: number, operator: string, num2: number): number | null {
   switch (operator) {
     case '+':
       return num1 + num2;
@@ -168,57 +172,80 @@ export function calculateExpression(parsed: ParsedExpression): number | null {
 }
 
 /**
- * Parse and calculate in one step
+ * Parse and calculate a math expression in one step
  */
-export function parseAndCalculate(transcript: string): {
-  expression: string;
-  result: number | null;
-  error?: string;
-} {
+export function parseAndCalculate(transcript: string): CalculationResult {
   const parsed = parseMathExpression(transcript);
 
   if (!parsed.isValid) {
     return {
-      expression: parsed.expression,
+      expression: parsed.expression || transcript,
       result: null,
       error: parsed.errorMessage,
     };
   }
 
-  const result = calculateExpression(parsed);
-
-  if (result === null) {
+  // If it's just a number (no operator), return it
+  if (parsed.operators.length === 0 && parsed.numbers.length === 1) {
     return {
       expression: parsed.expression,
-      result: null,
-      error: 'Cannot calculate result (possibly division by zero)',
+      result: parsed.numbers[0],
+    };
+  }
+
+  // Calculate the result
+  if (parsed.numbers.length === 2 && parsed.operators.length === 1) {
+    const result = calculateExpression(
+      parsed.numbers[0],
+      parsed.operators[0],
+      parsed.numbers[1]
+    );
+
+    if (result === null) {
+      return {
+        expression: parsed.expression,
+        result: null,
+        error: 'Division by zero',
+      };
+    }
+
+    return {
+      expression: parsed.expression,
+      result,
     };
   }
 
   return {
     expression: parsed.expression,
-    result,
+    result: null,
+    error: 'Invalid expression format',
   };
 }
 
 /**
- * Get all supported operators for help/documentation
+ * Get supported operators for documentation
  */
-export function getSupportedOperators(): Array<{ word: string; symbol: string }> {
+export function getSupportedOperators(): Array<{ words: string[]; symbol: string }> {
   return [
-    { word: 'plus', symbol: '+' },
-    { word: 'minus', symbol: '-' },
-    { word: 'times', symbol: '×' },
-    { word: 'divided by', symbol: '÷' },
+    { words: ['plus', 'add'], symbol: '+' },
+    { words: ['minus', 'subtract', 'take away'], symbol: '-' },
+    { words: ['times', 'multiply', 'multiplied by'], symbol: '×' },
+    { words: ['divided by', 'divide', 'over'], symbol: '÷' },
   ];
 }
 
 /**
- * Check if transcript contains a math expression
+ * Validate if a transcript looks like a math expression
  */
-export function isMathExpression(transcript: string): boolean {
+export function looksLikeMathExpression(transcript: string): boolean {
   const normalized = transcript.toLowerCase();
+  
+  // Check for operator keywords
   const hasOperator = OPERATOR_PATTERNS.some(({ pattern }) => pattern.test(normalized));
+  
+  // Check for number words
   const numbers = extractNumbers(normalized);
-  return hasOperator && numbers.length >= 1;
+  const hasNumbers = numbers.length > 0;
+  
+  return hasOperator && hasNumbers;
 }
