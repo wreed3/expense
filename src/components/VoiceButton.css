@@ -127,47 +127,36 @@
 
 .voice-status {
   font-size: 0.875rem;
-  color: #666;
-  text-align: center;
-  min-height: 1.25rem;
-  transition: color 0.2s ease;
-}
-
-.voice-status.listening {
   color: #e74c3c;
   font-weight: 500;
-}
-
-.voice-status.processing {
-  color: #f39c12;
-}
-
-.voice-status.error {
-  color: #e74c3c;
-}
-
-.current-transcript {
-  max-width: 300px;
-  padding: 0.75rem 1rem;
-  background: #f5f5f5;
-  border-radius: 8px;
-  font-size: 0.875rem;
-  color: #333;
-  text-align: center;
-  border: 1px solid #e0e0e0;
-  margin-top: 0.5rem;
+  animation: fadeIn 0.3s ease-in;
 }
 
 .voice-error {
-  max-width: 300px;
-  padding: 0.75rem 1rem;
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  left: 50%;
+  transform: translateX(-50%);
   background: #ffebee;
-  border-radius: 8px;
-  font-size: 0.875rem;
   color: #c62828;
-  text-align: center;
-  border: 1px solid #ef9a9a;
-  margin-top: 0.5rem;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  font-size: 0.875rem;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  z-index: 10;
+  animation: fadeIn 0.3s ease-in;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
 }
 
 @media (max-width: 768px) {
@@ -181,13 +170,10 @@
     height: 24px;
   }
 
-  .voice-status {
-    font-size: 0.8125rem;
-  }
-
-  .current-transcript,
   .voice-error {
     font-size: 0.8125rem;
-    padding: 0.625rem 0.875rem;
+    max-width: 200px;
+    white-space: normal;
+    text-align: center;
   }
 }
