@@ -1,7 +1,3 @@
-/**
- * Browser compatibility utilities for Web Speech API
- */
-
 export interface BrowserSupportInfo {
   isSupported: boolean;
   hasSpeechRecognition: boolean;
@@ -10,9 +6,6 @@ export interface BrowserSupportInfo {
   recommendations: string[];
 }
 
-/**
- * Check if the Web Speech API is supported in the current browser
- */
 export function checkBrowserSupport(): BrowserSupportInfo {
   const hasSpeechRecognition = 'SpeechRecognition' in window || 'webkitSpeechRecognition' in window;
   const hasSpeechSynthesis = 'speechSynthesis' in window;
@@ -38,9 +31,6 @@ export function checkBrowserSupport(): BrowserSupportInfo {
   };
 }
 
-/**
- * Detect the current browser
- */
 function detectBrowser(): string {
   const userAgent = navigator.userAgent;
 
@@ -59,9 +49,6 @@ function detectBrowser(): string {
   return 'Unknown';
 }
 
-/**
- * Get the SpeechRecognition constructor (handles vendor prefixes)
- */
 export function getSpeechRecognition(): typeof SpeechRecognition | null {
   if ('SpeechRecognition' in window) {
     return window.SpeechRecognition;
@@ -71,9 +58,6 @@ export function getSpeechRecognition(): typeof SpeechRecognition | null {
   return null;
 }
 
-/**
- * Request microphone permission
- */
 export async function requestMicrophonePermission(): Promise<boolean> {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
