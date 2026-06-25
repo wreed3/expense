@@ -46,18 +46,17 @@ This document describes the new features added in Phase 3 of the Expense Tracker
 - `POST /api/tags` - Create new tag
 - `PUT /api/tags/:id` - Update tag
 - `DELETE /api/tags/:id` - Delete tag
-- `GET /api/tags/:id/expenses` - Get expenses with tag
 
 ## 📝 Custom Fields
 
 ### Features
 - Create custom fields for additional expense metadata
 - Support for 5 field types:
-  - Text (free-form text input)
-  - Number (numeric values)
-  - Date (date picker)
-  - Boolean (yes/no radio buttons)
-  - Select (dropdown with custom options)
+  - **Text**: Free-form text input
+  - **Number**: Numeric values
+  - **Date**: Date picker
+  - **Boolean**: Yes/no radio buttons
+  - **Select**: Dropdown with custom options
 - Mark fields as required or optional
 - Fields apply to all expenses
 
@@ -74,7 +73,6 @@ This document describes the new features added in Phase 3 of the Expense Tracker
 3. For select fields, add dropdown options
 4. Mark required fields with checkbox
 5. Fields appear in expense form automatically
-6. Data is saved with each expense
 
 ### API Endpoints
 - `GET /api/custom-fields` - List all custom fields
@@ -92,7 +90,6 @@ This document describes the new features added in Phase 3 of the Expense Tracker
 - Filter by currency
 - Filter by tags (multiple)
 - Sort by date, amount, description, or category
-- Ascending or descending order
 - Pagination support
 
 ### Usage
@@ -100,13 +97,6 @@ This document describes the new features added in Phase 3 of the Expense Tracker
 2. Fill in desired filters
 3. Click **Apply Filters**
 4. Clear filters anytime with **Reset All**
-5. Active filters are highlighted
-
-### Filter Combinations
-All filters work together (AND logic):
-- Date range + Category + Tags
-- Amount range + Currency + Search text
-- Any combination of available filters
 
 ## 📊 Enhanced Expense List
 
@@ -117,16 +107,12 @@ All filters work together (AND logic):
 - Bulk delete operation
 - Bulk tag operation
 - Pagination controls
-- Receipt indicator
-- Recurring expense badge
 - Filter status indicator
 
 ### Bulk Operations
 1. Check boxes next to expenses
 2. Click **Bulk Actions** button
-3. Choose operation:
-   - Delete selected expenses
-   - Add tags to selected expenses
+3. Choose operation (delete or tag)
 4. Confirm action
 
 ## ⚙️ Settings Page
@@ -137,20 +123,17 @@ Centralized settings management with tabs:
 - View all supported currencies
 - Update exchange rates
 - Set default currency
-- See conversion information
 
 ### Tags Tab
 - Create and manage tags
 - Edit tag names and colors
 - View usage statistics
-- Delete unused tags
 
 ### Custom Fields Tab
 - Create custom fields
 - Configure field types
 - Set required status
 - Manage dropdown options
-- Delete fields
 
 ## 🗄️ Database Changes
 
@@ -165,111 +148,30 @@ Centralized settings management with tabs:
 - `expenses` - Added `currency_code` and `original_amount` columns
 
 ### Indexes
-Performance indexes added for:
-- `expenses(user_id, date)`
-- `expenses(category_id)`
-- `expenses(amount)`
-- `expense_tags(expense_id)`
-- `expense_tags(tag_id)`
-- `tags(user_id)`
-- `custom_fields(user_id)`
+- `idx_expenses_user_date`
+- `idx_expenses_category`
+- `idx_expenses_amount`
+- `idx_expense_tags_expense`
+- `idx_expense_tags_tag`
+- `idx_tags_user`
+- `idx_custom_fields_user`
 
-## 🚀 API Enhancements
+## 🚀 Migration
 
-### Enhanced Expense Endpoints
-- `GET /api/expenses` now supports:
-  - `start_date`, `end_date` - Date range
-  - `category_id` - Filter by category
-  - `min_amount`, `max_amount` - Amount range
-  - `search` - Text search in description
-  - `tags` - Array of tag IDs
-  - `currency` - Filter by currency code
-  - `sort_by` - Sort field
-  - `sort_order` - Sort direction
-  - `limit`, `offset` - Pagination
+To apply Phase 3 changes:
 
-### Bulk Operations
-- `POST /api/expenses/bulk-delete` - Delete multiple expenses
-  - Body: `{ expense_ids: number[] }`
-- `POST /api/expenses/bulk-tag` - Tag multiple expenses
-  - Body: `{ expense_ids: number[], tag_ids: number[] }`
+```bash
+npm run migrate
+```
 
-## 🎨 UI Components
+This will:
+1. Create new tables
+2. Add columns to existing tables
+3. Insert default currencies
+4. Create performance indexes
 
-### New Components
-- **CurrencySelector** - Dropdown for currency selection
-- **CurrencySettings** - Currency management interface
-- **TagManager** - Tag creation and editing
-- **TagSelector** - Multi-select tag picker
-- **CustomFieldManager** - Custom field configuration
-- **CustomFieldInput** - Dynamic field renderer
-- **AdvancedSearch** - Comprehensive search modal
-- **Settings** - Tabbed settings page
+## 📖 Documentation
 
-### Updated Components
-- **ExpenseForm** - Added currency, tags, and custom fields
-- **ExpenseList** - Added bulk operations and filtering
-- **Dashboard** - Display currency conversions
-- **Navigation** - Added Settings link
-
-## 📱 Mobile Responsiveness
-
-All new components are fully responsive:
-- Touch-friendly controls
-- Mobile-optimized layouts
-- Responsive tables and lists
-- Collapsible filters on mobile
-
-## 🔧 Configuration
-
-### Environment Variables
-No new environment variables required. All configuration is done through the UI.
-
-### Default Data
-Migration automatically creates:
-- 9 currencies with USD as default
-- Exchange rates (can be updated)
-
-## 🧪 Testing
-
-Test the new features:
-1. Create tags and custom fields in Settings
-2. Add expenses with different currencies
-3. Use tags and custom fields on expenses
-4. Try advanced search with multiple filters
-5. Test bulk operations
-6. Verify currency conversion
-
-## 📈 Performance
-
-Optimizations included:
-- Database indexes on frequently queried columns
-- Efficient bulk operations
-- Pagination to limit data transfer
-- Caching of currency rates
-
-## 🐛 Known Limitations
-
-- Exchange rates must be manually updated
-- Currency conversion uses simple multiplication
-- Tags and custom fields cannot be reordered
-- Bulk operations limited to current page
-
-## 🔮 Future Enhancements
-
-Potential improvements:
-- Automatic exchange rate updates via API
-- Tag categories/groups
-- Custom field validation rules
-- Import/export tags and fields
-- Shared tags across users
-
-## 📚 Additional Resources
-
-- [API Documentation](./API.md)
-- [Database Schema](./SCHEMA.md)
-- [User Guide](./USER_GUIDE.md)
-
----
-
-For questions or issues, please open a GitHub issue or contact support.
+For more details, see:
+- [README.md](README.md) - Full application documentation
+- [CHANGELOG.md](CHANGELOG.md) - Version history

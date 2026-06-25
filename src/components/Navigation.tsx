@@ -50,26 +50,27 @@ export default function Navigation() {
               ))}
             </div>
           </div>
-          
+
           <div className="flex items-center">
-            <div className="hidden md:block">
-              <span className="text-gray-700 mr-4">
-                Welcome, {user?.name || user?.email}
+            {/* Desktop User Menu */}
+            <div className="hidden md:flex md:items-center md:gap-4">
+              <span className="text-gray-700">
+                Welcome, {user?.name || 'User'}
               </span>
               <button
                 onClick={handleLogout}
-                className="px-4 py-2 text-sm text-gray-700 hover:text-gray-900"
+                className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-md"
               >
                 Logout
               </button>
             </div>
-            
+
             {/* Mobile menu button */}
             <button
               onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
               className="md:hidden inline-flex items-center justify-center p-2 rounded-md text-gray-400 hover:text-gray-500 hover:bg-gray-100"
             >
-              <span className="sr-only">Open menu</span>
+              <span className="sr-only">Open main menu</span>
               {isMobileMenuOpen ? (
                 <span className="text-2xl">✕</span>
               ) : (
@@ -82,7 +83,7 @@ export default function Navigation() {
 
       {/* Mobile menu */}
       {isMobileMenuOpen && (
-        <div className="md:hidden border-t border-gray-200">
+        <div className="md:hidden">
           <div className="pt-2 pb-3 space-y-1">
             {navItems.map((item) => (
               <Link
@@ -91,8 +92,8 @@ export default function Navigation() {
                 onClick={() => setIsMobileMenuOpen(false)}
                 className={`block pl-3 pr-4 py-2 border-l-4 text-base font-medium ${
                   location.pathname === item.path
-                    ? 'border-blue-500 text-blue-700 bg-blue-50'
-                    : 'border-transparent text-gray-600 hover:bg-gray-50 hover:border-gray-300 hover:text-gray-800'
+                    ? 'bg-blue-50 border-blue-500 text-blue-700'
+                    : 'border-transparent text-gray-500 hover:bg-gray-50 hover:border-gray-300 hover:text-gray-700'
                 }`}
               >
                 <span className="mr-2">{item.icon}</span>
@@ -101,9 +102,15 @@ export default function Navigation() {
             ))}
           </div>
           <div className="pt-4 pb-3 border-t border-gray-200">
-            <div className="px-4">
-              <div className="text-base font-medium text-gray-800">
-                {user?.name || user?.email}
+            <div className="flex items-center px-4">
+              <div className="flex-shrink-0">
+                <div className="h-10 w-10 rounded-full bg-blue-600 flex items-center justify-center text-white font-bold">
+                  {user?.name?.charAt(0).toUpperCase() || 'U'}
+                </div>
+              </div>
+              <div className="ml-3">
+                <div className="text-base font-medium text-gray-800">{user?.name || 'User'}</div>
+                <div className="text-sm font-medium text-gray-500">{user?.email || ''}</div>
               </div>
             </div>
             <div className="mt-3 space-y-1">

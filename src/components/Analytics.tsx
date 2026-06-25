@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { format, subMonths } from 'date-fns';
 import AdvancedAnalytics from './AdvancedAnalytics';
 
 export default function Analytics() {
@@ -47,8 +46,8 @@ export default function Analytics() {
           {activeTab === 'overview' && (
             <div className="text-center py-12 text-gray-500">
               <div className="text-4xl mb-3">📈</div>
-              <p>Basic analytics overview coming soon</p>
-              <p className="text-sm mt-2">Try the Advanced Analytics tab for detailed insights</p>
+              <p>Basic analytics overview</p>
+              <p className="text-sm mt-2">Switch to Advanced Analytics for detailed insights</p>
             </div>
           )}
           {activeTab === 'advanced' && <AdvancedAnalytics />}

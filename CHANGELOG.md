@@ -134,11 +134,13 @@ All notable changes to the Expense Tracker project will be documented in this fi
 - Zustand state management
 - Recharts for visualizations
 - Tailwind CSS styling
+- Winston logging
+- Rate limiting
+- Security headers
 
 ---
 
 ## Version History
 
-- **2.0.0** (Current) - Phase 4: Advanced Analytics & Data Management
-- **1.5.0** - Phase 3: Multi-Currency, Tags & Custom Fields
-- **1.0.0** - Initial Release: Core expense tracking functionality
+- **2.0.0** - Phase 3 & 4: Multi-currency, tags, custom fields, advanced analytics, import/export
+- **1.0.0** - Initial release with core expense tracking features
