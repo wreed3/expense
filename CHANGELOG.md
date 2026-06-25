@@ -84,6 +84,34 @@ All notable changes to the Expense Tracker project will be documented in this fi
 - Pagination support
 - Settings page with tabs
 
+#### Added - Database Schema
+- `currencies` table with exchange rates
+- `tags` table with user-created tags
+- `expense_tags` junction table
+- `custom_fields` table with field definitions
+- `expense_custom_fields` table for field values
+- Performance indexes on key columns
+
+#### Added - API Endpoints
+- `GET /api/currencies` - List currencies
+- `PUT /api/currencies/:code` - Update exchange rate
+- `POST /api/currencies/:code/set-default` - Set default
+- `POST /api/currencies/convert` - Convert amounts
+- `GET /api/tags` - List tags
+- `POST /api/tags` - Create tag
+- `PUT /api/tags/:id` - Update tag
+- `DELETE /api/tags/:id` - Delete tag
+- `GET /api/custom-fields` - List custom fields
+- `POST /api/custom-fields` - Create field
+- `PUT /api/custom-fields/:id` - Update field
+- `DELETE /api/custom-fields/:id` - Delete field
+
+#### Changed
+- Enhanced expense form with currency selector, tags, and custom fields
+- Updated expense list with filtering and bulk operations
+- Improved search with multiple filter criteria
+- Added settings page with currency, tag, and field management
+
 ## [1.0.0] - 2024-12-01
 
 ### Initial Release

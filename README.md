@@ -36,6 +36,7 @@ A comprehensive full-stack expense tracking application built with React, TypeSc
 - **Export Capabilities**: Export data to CSV and generate PDF reports
 - **Recurring Expenses**: Set up automatic recurring transactions
 - **Budget Alerts**: Get notified when approaching budget limits
+- **Spending Analytics**: Detailed insights and trend analysis
 - **Responsive Design**: Works seamlessly on desktop and mobile devices
 
 ### Technical Features
@@ -45,12 +46,15 @@ A comprehensive full-stack expense tracking application built with React, TypeSc
 - **Type Safety**: Full TypeScript implementation
 - **Data Validation**: Schema validation using Zod
 - **Hot Reload**: Development environment with hot module replacement
+- **Caching**: Optional Redis caching for improved performance
+- **Testing**: Comprehensive test suite with Vitest and Playwright
 
 ## 🚀 Quick Start
 
 ### Prerequisites
 - Node.js 18+ and npm
 - SQLite (default) or PostgreSQL (optional)
+- Redis (optional, for caching)
 
 ### Installation
 
@@ -90,6 +94,12 @@ A comprehensive full-stack expense tracking application built with React, TypeSc
 
    # Client URL
    CLIENT_URL=http://localhost:3000
+
+   # Redis Configuration (Optional)
+   REDIS_ENABLED=false
+   REDIS_HOST=localhost
+   REDIS_PORT=6379
+   REDIS_PASSWORD=
    ```
 
 4. **Run database migrations**
@@ -118,33 +128,48 @@ expense/
 ├── server/                 # Backend Express server
 │   ├── index.ts           # Server entry point
 │   ├── migrations/        # Database migrations and seeds
+│   │   ├── run.ts         # Migration runner
+│   │   ├── seed.ts        # Seed data
+│   │   └── 004_phase3_features.ts  # Phase 3 schema
 │   ├── routes/            # API route handlers
 │   │   ├── analytics-advanced.ts  # Advanced analytics endpoints
 │   │   ├── import-export.ts       # Import/export functionality
+│   │   ├── currencies.ts          # Currency management
+│   │   ├── tags.ts               # Tag management
+│   │   ├── custom-fields.ts      # Custom field management
 │   │   └── ...
 │   ├── middleware/        # Express middleware
 │   └── utils/             # Utility functions
+│       └── cache.ts       # Redis cache manager
 ├── src/                   # Frontend React application
 │   ├── components/        # React components
 │   │   ├── AdvancedAnalytics.tsx  # Advanced analytics UI
 │   │   ├── ImportExport.tsx       # Import/export UI
 │   │   ├── DataManagement.tsx     # Data management page
+│   │   ├── TagManager.tsx         # Tag management
+│   │   ├── CustomFieldManager.tsx # Custom field management
 │   │   └── ...
 │   ├── hooks/            # Custom React hooks
 │   ├── stores/           # Zustand state management
 │   │   ├── analyticsStore.ts      # Analytics state
 │   │   ├── importExportStore.ts   # Import/export state
+│   │   ├── currencyStore.ts       # Currency state
+│   │   ├── tagStore.ts            # Tag state
 │   │   └── ...
 │   ├── types/            # TypeScript type definitions
 │   └── utils/            # Frontend utilities
 ├── public/               # Static assets
 ├── uploads/              # User-uploaded files (receipts)
-├── PHASE3_FEATURES.md    # Phase 3 documentation
-├── PHASE4_FEATURES.md    # Phase 4 documentation
+├── tests/                # Test files
+│   ├── unit/             # Unit tests
+│   └── e2e/              # End-to-end tests
 ├── .env.example          # Environment variables template
 ├── package.json          # Project dependencies
 ├── tsconfig.json         # TypeScript configuration
-└── vite.config.ts        # Vite build configuration
+├── vite.config.ts        # Vite build configuration
+├── PHASE3_FEATURES.md    # Phase 3 documentation
+├── PHASE4_FEATURES.md    # Phase 4 documentation
+└── CHANGELOG.md          # Version history
 ```
 
 ## 🔧 Configuration
@@ -165,6 +190,17 @@ DB_PORT=5432
 DB_NAME=expense_tracker
 DB_USER=postgres
 DB_PASSWORD=your_password
+```
+
+### Redis Caching (Optional)
+
+Enable Redis for improved performance:
+
+```env
+REDIS_ENABLED=true
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_PASSWORD=your_redis_password
 ```
 
 ### Security Settings
@@ -190,6 +226,11 @@ DB_PASSWORD=your_password
 | `npm run preview` | Preview the production build locally |
 | `npm run migrate` | Run database migrations |
 | `npm run seed` | Seed the database with sample data |
+| `npm test` | Run unit tests with Vitest |
+| `npm run test:ui` | Run tests with Vitest UI |
+| `npm run test:coverage` | Generate test coverage report |
+| `npm run test:e2e` | Run end-to-end tests with Playwright |
+| `npm run test:e2e:ui` | Run E2E tests with Playwright UI |
 
 ## 🔐 Authentication
 
@@ -213,6 +254,8 @@ The application uses JWT (JSON Web Tokens) for authentication:
 - `GET /api/expenses/:id` - Get expense by ID
 - `PUT /api/expenses/:id` - Update expense
 - `DELETE /api/expenses/:id` - Delete expense
+- `POST /api/expenses/bulk-delete` - Delete multiple expenses
+- `POST /api/expenses/bulk-tag` - Tag multiple expenses
 
 ### Categories
 - `GET /api/categories` - Get all categories
@@ -226,8 +269,32 @@ The application uses JWT (JSON Web Tokens) for authentication:
 - `PUT /api/budgets/:id` - Update budget
 - `DELETE /api/budgets/:id` - Delete budget
 
-### Advanced Analytics (Phase 4)
-- `GET /api/analytics-advanced/trends` - Spending trends and forecast
+### Currencies
+- `GET /api/currencies` - Get all currencies
+- `GET /api/currencies/default` - Get default currency
+- `PUT /api/currencies/:code` - Update exchange rate
+- `POST /api/currencies/:code/set-default` - Set default currency
+- `POST /api/currencies/convert` - Convert between currencies
+
+### Tags
+- `GET /api/tags` - Get all tags
+- `POST /api/tags` - Create new tag
+- `PUT /api/tags/:id` - Update tag
+- `DELETE /api/tags/:id` - Delete tag
+
+### Custom Fields
+- `GET /api/custom-fields` - Get all custom fields
+- `POST /api/custom-fields` - Create new custom field
+- `PUT /api/custom-fields/:id` - Update custom field
+- `DELETE /api/custom-fields/:id` - Delete custom field
+
+### Analytics
+- `GET /api/analytics/summary` - Get spending summary
+- `GET /api/analytics/trends` - Get spending trends
+- `GET /api/analytics/categories` - Get category breakdown
+
+### Advanced Analytics
+- `GET /api/analytics-advanced/trends` - Spending trends with forecasting
 - `GET /api/analytics-advanced/category-comparison` - Category comparison
 - `GET /api/analytics-advanced/budget-performance` - Budget performance
 - `GET /api/analytics-advanced/heatmap` - Spending heatmap
@@ -235,12 +302,14 @@ The application uses JWT (JSON Web Tokens) for authentication:
 - `GET /api/analytics-advanced/month-comparison` - Month comparison
 - `GET /api/analytics-advanced/insights` - Smart insights
 
-### Import/Export (Phase 4)
-- `POST /api/import-export/import` - Import from CSV/Excel
+### Import/Export
+- `POST /api/import-export/import` - Import expenses from CSV/Excel
 - `GET /api/import-export/export/excel` - Export to Excel
-- `GET /api/import-export/backup` - Create backup
-- `POST /api/import-export/restore` - Restore backup
-- `GET /api/import-export/template` - Download template
+- `GET /api/import-export/backup` - Create full backup
+- `POST /api/import-export/restore` - Restore from backup
+- `GET /api/import-export/template` - Download import template
+- `GET /api/export/csv` - Export expenses to CSV
+- `GET /api/export/pdf` - Generate PDF report
 
 ## 🎨 Technology Stack
 
@@ -252,7 +321,10 @@ The application uses JWT (JSON Web Tokens) for authentication:
 - **Recharts** - Data visualization
 - **React Hot Toast** - Notifications
 - **date-fns** - Date manipulation
-- **Tailwind CSS** - Styling
+- **jsPDF** - PDF generation
+- **Radix UI** - Accessible component primitives
+- **Tailwind CSS** - Utility-first styling
+- **Lucide React** - Icon library
 
 ### Backend
 - **Express** - Web framework
@@ -266,8 +338,14 @@ The application uses JWT (JSON Web Tokens) for authentication:
 - **Winston** - Logging
 - **Helmet** - Security headers
 - **express-rate-limit** - Rate limiting
+- **ioredis** - Redis client (optional)
 - **xlsx** - Excel file handling
 - **csv-parse** - CSV parsing
+
+### Testing
+- **Vitest** - Unit testing framework
+- **Playwright** - End-to-end testing
+- **Supertest** - HTTP assertion library
 
 ## 🛡️ Security Features
 
@@ -314,6 +392,7 @@ The application uses JWT (JSON Web Tokens) for authentication:
 - Set up proper logging and monitoring
 - Configure backup strategy for database
 - Use environment-specific rate limits
+- Consider enabling Redis caching for better performance
 
 ## 📝 Development Guidelines
 
@@ -333,6 +412,11 @@ The application uses JWT (JSON Web Tokens) for authentication:
 - Always create migrations for schema changes
 - Test migrations on development database first
 - Keep migrations reversible when possible
+
+### Testing
+- Write unit tests for business logic
+- Add E2E tests for critical user flows
+- Maintain test coverage above 80%
 
 ## 🐛 Troubleshooting
 
@@ -365,17 +449,11 @@ rm -rf dist .vite
 npm run build
 ```
 
-**Import fails**
+**Redis connection issues**
 ```bash
-# Download template and match format exactly
-# Check date format is YYYY-MM-DD
-# Ensure amounts are numbers without symbols
+# Disable Redis if not needed
+REDIS_ENABLED=false
 ```
-
-## 📚 Documentation
-
-- **[Phase 3 Features](PHASE3_FEATURES.md)** - Multi-currency, tags, custom fields
-- **[Phase 4 Features](PHASE4_FEATURES.md)** - Advanced analytics and data management
 
 ## 📄 License
 
@@ -389,9 +467,14 @@ Contributions are welcome! Please feel free to submit issues and pull requests.
 
 For questions or support, please open an issue on the GitHub repository.
 
+## 📚 Documentation
+
+- [Phase 3 Features](./PHASE3_FEATURES.md) - Multi-Currency, Tags & Custom Fields
+- [Phase 4 Features](./PHASE4_FEATURES.md) - Advanced Analytics & Data Management
+- [Changelog](./CHANGELOG.md) - Version history and updates
+
 ---
 
 **Version**: 2.0.0  
 **Repository**: [wreed3/expense](https://github.com/wreed3/expense)  
-**Branch**: master  
-**Latest Release**: Phase 4 - Advanced Analytics & Data Management
+**Branch**: master

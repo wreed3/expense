@@ -5,29 +5,34 @@ import rateLimit from 'express-rate-limit';
 import Database from 'better-sqlite3';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import fs from 'fs';
 import dotenv from 'dotenv';
 import winston from 'winston';
 
-// Routes
-import authRoutes from './routes/auth';
-import expenseRoutes from './routes/expenses';
-import categoryRoutes from './routes/categories';
-import budgetRoutes from './routes/budgets';
-import analyticsRoutes from './routes/analytics';
-import exportRoutes from './routes/export';
-import currencyRoutes from './routes/currencies';
-import tagRoutes from './routes/tags';
-import customFieldRoutes from './routes/custom-fields';
-import analyticsAdvancedRoutes from './routes/analytics-advanced';
-import importExportRoutes from './routes/import-export';
+// Import routes
+import authRoutes from './routes/auth.js';
+import expenseRoutes from './routes/expenses.js';
+import categoryRoutes from './routes/categories.js';
+import budgetRoutes from './routes/budgets.js';
+import analyticsRoutes from './routes/analytics.js';
+import exportRoutes from './routes/export.js';
+import incomeRoutes from './routes/income.js';
+import importRoutes from './routes/import.js';
+import currencyRoutes from './routes/currencies.js';
+import tagRoutes from './routes/tags.js';
+import customFieldRoutes from './routes/custom-fields.js';
+import searchRoutes from './routes/search.js';
+import analyticsAdvancedRoutes from './routes/analytics-advanced.js';
+import importExportRoutes from './routes/import-export.js';
+
+// Import cache manager
+import { cacheManager } from './utils/cache.js';
 
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Logger setup
+// Configure Winston logger
 const logger = winston.createLogger({
   level: process.env.LOG_LEVEL || 'info',
   format: winston.format.combine(
@@ -42,37 +47,23 @@ const logger = winston.createLogger({
 
 if (process.env.NODE_ENV !== 'production') {
   logger.add(new winston.transports.Console({
-    format: winston.format.combine(
-      winston.format.colorize(),
-      winston.format.simple()
-    ),
+    format: winston.format.simple(),
   }));
 }
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Database setup
+// Initialize database
 const dbPath = process.env.DB_PATH || join(__dirname, '../expenses.db');
-const dbDir = dirname(dbPath);
+const db = new Database(dbPath);
 
-if (!fs.existsSync(dbDir)) {
-  fs.mkdirSync(dbDir, { recursive: true });
-}
+// Enable WAL mode for better concurrency
+db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
 
-let db: Database.Database;
-
-try {
-  db = new Database(dbPath);
-  db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
-  logger.info('Database connected successfully');
-} catch (error) {
-  logger.error('Failed to connect to database:', error);
-  process.exit(1);
-}
-
-export function getDb() {
+// Export database instance for routes
+export function getDatabase() {
   return db;
 }
 
@@ -83,7 +74,6 @@ app.use(cors({
   credentials: true,
 }));
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
 
 // Rate limiting
 const limiter = rateLimit({
@@ -94,14 +84,25 @@ const limiter = rateLimit({
 
 app.use('/api/', limiter);
 
-// Serve uploaded files
-const uploadDir = process.env.UPLOAD_DIR || './uploads';
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
-app.use('/uploads', express.static(uploadDir));
+// Request logging
+app.use((req, res, next) => {
+  logger.info(`${req.method} ${req.path}`, {
+    ip: req.ip,
+    userAgent: req.get('user-agent'),
+  });
+  next();
+});
 
-// Routes
+// Health check
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    timestamp: new Date().toISOString(),
+    cache: cacheManager.getIsEnabled() ? 'enabled' : 'disabled',
+  });
+});
+
+// API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/expenses', expenseRoutes);
 app.use('/api/categories', categoryRoutes);
@@ -109,38 +110,60 @@ app.use('/api/budgets', budgetRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/analytics-advanced', analyticsAdvancedRoutes);
 app.use('/api/export', exportRoutes);
+app.use('/api/income', incomeRoutes);
+app.use('/api/import', importRoutes);
+app.use('/api/import-export', importExportRoutes);
 app.use('/api/currencies', currencyRoutes);
 app.use('/api/tags', tagRoutes);
 app.use('/api/custom-fields', customFieldRoutes);
-app.use('/api/import-export', importExportRoutes);
+app.use('/api/search', searchRoutes);
 
-// Health check
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
-});
+// Serve uploaded files
+app.use('/uploads', express.static(join(__dirname, '../uploads')));
 
-// Error handling
+// Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
-  logger.error('Unhandled error:', err);
-  res.status(500).json({ error: 'Internal server error' });
+  logger.error('Unhandled error:', {
+    error: err.message,
+    stack: err.stack,
+    path: req.path,
+    method: req.method,
+  });
+
+  res.status(err.status || 500).json({
+    error: process.env.NODE_ENV === 'production' 
+      ? 'Internal server error' 
+      : err.message,
+  });
 });
 
-// Start server
-app.listen(PORT, () => {
-  logger.info(`Server running on port ${PORT}`);
-  console.log(`🚀 Server ready at http://localhost:${PORT}`);
-  console.log(`📊 API available at http://localhost:${PORT}/api`);
-});
+// Initialize cache manager and start server
+async function startServer() {
+  try {
+    await cacheManager.initialize();
+    
+    app.listen(PORT, () => {
+      logger.info(`Server running on port ${PORT}`);
+      logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
+      logger.info(`Cache: ${cacheManager.getIsEnabled() ? 'enabled' : 'disabled'}`);
+    });
+  } catch (error) {
+    logger.error('Failed to start server:', error);
+    process.exit(1);
+  }
+}
+
+startServer();
 
 // Graceful shutdown
-process.on('SIGINT', () => {
-  logger.info('Shutting down gracefully...');
+process.on('SIGTERM', () => {
+  logger.info('SIGTERM received, closing server gracefully');
   db.close();
   process.exit(0);
 });
 
-process.on('SIGTERM', () => {
-  logger.info('Shutting down gracefully...');
+process.on('SIGINT', () => {
+  logger.info('SIGINT received, closing server gracefully');
   db.close();
   process.exit(0);
 });

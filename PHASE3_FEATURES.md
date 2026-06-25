@@ -181,138 +181,95 @@ Performance indexes added for:
   - `start_date`, `end_date` - Date range
   - `category_id` - Filter by category
   - `min_amount`, `max_amount` - Amount range
-  - `search` - Text search in descriptions
-  - `tags` - Comma-separated tag IDs
+  - `search` - Text search in description
+  - `tags` - Array of tag IDs
   - `currency` - Filter by currency code
   - `sort_by` - Sort field
-  - `sort_order` - asc or desc
+  - `sort_order` - Sort direction
   - `limit`, `offset` - Pagination
 
-- `POST /api/expenses/bulk/delete` - Delete multiple expenses
-- `POST /api/expenses/bulk/tag` - Tag multiple expenses
-
-### Response Format
-Expenses now include:
-```json
-{
-  "expenses": [...],
-  "pagination": {
-    "total": 100,
-    "limit": 50,
-    "offset": 0,
-    "has_more": true
-  }
-}
-```
-
-## 🔄 Migration
-
-Phase 3 features require running migrations:
-
-```bash
-npm run migrate
-```
-
-This will:
-1. Create new tables (currencies, tags, custom_fields, etc.)
-2. Add new columns to expenses table
-3. Create performance indexes
-4. Insert default currencies
-
-To rollback:
-```bash
-npm run migrate:down 004_phase3_features
-```
-
-## 📦 Seed Data
-
-Updated seed script includes:
-- 5 sample tags
-- 4 custom fields
-- Tagged expenses
-- Multi-currency expenses
-
-Run with:
-```bash
-npm run seed
-```
+### Bulk Operations
+- `POST /api/expenses/bulk-delete` - Delete multiple expenses
+  - Body: `{ expense_ids: number[] }`
+- `POST /api/expenses/bulk-tag` - Tag multiple expenses
+  - Body: `{ expense_ids: number[], tag_ids: number[] }`
 
 ## 🎨 UI Components
 
 ### New Components
-- `CurrencySelector` - Currency dropdown with symbols
-- `CurrencySettings` - Manage currencies and rates
-- `TagManager` - Create and manage tags
-- `TagSelector` - Multi-select tag picker
-- `CustomFieldManager` - Manage custom fields
-- `CustomFieldInput` - Render field based on type
-- `AdvancedSearch` - Comprehensive search modal
-- `Settings` - Tabbed settings page
+- **CurrencySelector** - Dropdown for currency selection
+- **CurrencySettings** - Currency management interface
+- **TagManager** - Tag creation and editing
+- **TagSelector** - Multi-select tag picker
+- **CustomFieldManager** - Custom field configuration
+- **CustomFieldInput** - Dynamic field renderer
+- **AdvancedSearch** - Comprehensive search modal
+- **Settings** - Tabbed settings page
 
 ### Updated Components
-- `ExpenseForm` - Added currency, tags, custom fields
-- `ExpenseList` - Added bulk actions, filters, pagination
-- `Navigation` - Added Settings link
-- `App` - Added Settings route
+- **ExpenseForm** - Added currency, tags, and custom fields
+- **ExpenseList** - Added bulk operations and filtering
+- **Dashboard** - Display currency conversions
+- **Navigation** - Added Settings link
 
-## 🔐 Security
+## 📱 Mobile Responsiveness
 
-All new endpoints are protected with:
-- JWT authentication
-- User-scoped data (can only access own data)
-- Input validation with Zod
-- SQL injection prevention (parameterized queries)
-- Rate limiting
+All new components are fully responsive:
+- Touch-friendly controls
+- Mobile-optimized layouts
+- Responsive tables and lists
+- Collapsible filters on mobile
 
-## 📈 Performance
+## 🔧 Configuration
 
-Phase 3 includes several optimizations:
-- Database indexes for common queries
-- Efficient bulk operations
-- Pagination to reduce data transfer
-- Optimized JOIN queries
-- Transaction support for data consistency
+### Environment Variables
+No new environment variables required. All configuration is done through the UI.
+
+### Default Data
+Migration automatically creates:
+- 9 currencies with USD as default
+- Exchange rates (can be updated)
 
 ## 🧪 Testing
 
-To test Phase 3 features:
+Test the new features:
+1. Create tags and custom fields in Settings
+2. Add expenses with different currencies
+3. Use tags and custom fields on expenses
+4. Try advanced search with multiple filters
+5. Test bulk operations
+6. Verify currency conversion
 
-1. Run migrations: `npm run migrate`
-2. Seed database: `npm run seed`
-3. Login with: `test@example.com` / `password123`
-4. Navigate to Settings to configure:
-   - Currencies and exchange rates
-   - Tags for categorization
-   - Custom fields for metadata
-5. Create expenses with new features
-6. Use Advanced Search to filter
-7. Try bulk operations
+## 📈 Performance
 
-## 📝 Notes
-
-- Exchange rates must be updated manually
-- Custom fields apply to all expenses
-- Deleting a tag removes it from all expenses
-- Deleting a custom field removes all associated data
-- Currency conversion is done at query time
-- Original amounts are preserved in database
+Optimizations included:
+- Database indexes on frequently queried columns
+- Efficient bulk operations
+- Pagination to limit data transfer
+- Caching of currency rates
 
 ## 🐛 Known Limitations
 
-- Exchange rates are not automatically updated
-- No support for cryptocurrency
-- Custom fields limited to 5 types
-- Bulk operations limited to visible expenses
-- No field-level permissions
+- Exchange rates must be manually updated
+- Currency conversion uses simple multiplication
+- Tags and custom fields cannot be reordered
+- Bulk operations limited to current page
 
 ## 🔮 Future Enhancements
 
-Potential improvements for future phases:
-- Auto-update exchange rates via API
-- Custom field templates
-- Field-level validation rules
-- Tag hierarchies/categories
-- Saved search filters
-- Export with custom fields
-- Currency conversion history
-- Multi-currency budget support
+Potential improvements:
+- Automatic exchange rate updates via API
+- Tag categories/groups
+- Custom field validation rules
+- Import/export tags and fields
+- Shared tags across users
+
+## 📚 Additional Resources
+
+- [API Documentation](./API.md)
+- [Database Schema](./SCHEMA.md)
+- [User Guide](./USER_GUIDE.md)
+
+---
+
+For questions or issues, please open a GitHub issue or contact support.
