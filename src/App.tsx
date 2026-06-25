@@ -10,6 +10,7 @@ import CategoryManager from './components/CategoryManager';
 import BudgetManager from './components/BudgetManager';
 import Analytics from './components/Analytics';
 import Settings from './components/Settings';
+import DataManagement from './components/DataManagement';
 import Navigation from './components/Navigation';
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
@@ -81,9 +82,16 @@ function App() {
             path="/analytics"
             element={
               <PrivateRoute>
-                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-                  <Analytics />
-                </div>
+                <Analytics />
+              </PrivateRoute>
+            }
+          />
+          
+          <Route
+            path="/data-management"
+            element={
+              <PrivateRoute>
+                <DataManagement />
               </PrivateRoute>
             }
           />

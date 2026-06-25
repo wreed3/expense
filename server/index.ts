@@ -19,6 +19,8 @@ import exportRoutes from './routes/export';
 import currencyRoutes from './routes/currencies';
 import tagRoutes from './routes/tags';
 import customFieldRoutes from './routes/custom-fields';
+import analyticsAdvancedRoutes from './routes/analytics-advanced';
+import importExportRoutes from './routes/import-export';
 
 dotenv.config();
 
@@ -88,84 +90,57 @@ const limiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000'), // 15 minutes
   max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100'),
   message: 'Too many requests from this IP, please try again later.',
-  standardHeaders: true,
-  legacyHeaders: false,
 });
 
 app.use('/api/', limiter);
 
-// Request logging
-app.use((req, res, next) => {
-  logger.info(`${req.method} ${req.path}`, {
-    ip: req.ip,
-    userAgent: req.get('user-agent'),
-  });
-  next();
-});
-
-// Static files for uploads
-const uploadDir = process.env.UPLOAD_DIR || join(__dirname, '../uploads');
+// Serve uploaded files
+const uploadDir = process.env.UPLOAD_DIR || './uploads';
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
 app.use('/uploads', express.static(uploadDir));
 
-// Health check
-app.get('/api/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
-    timestamp: new Date().toISOString(),
-    version: '2.0.0'
-  });
-});
-
-// API Routes
+// Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/expenses', expenseRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/budgets', budgetRoutes);
 app.use('/api/analytics', analyticsRoutes);
+app.use('/api/analytics-advanced', analyticsAdvancedRoutes);
 app.use('/api/export', exportRoutes);
 app.use('/api/currencies', currencyRoutes);
 app.use('/api/tags', tagRoutes);
 app.use('/api/custom-fields', customFieldRoutes);
+app.use('/api/import-export', importExportRoutes);
+
+// Health check
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
 
 // Error handling
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
-  logger.error('Unhandled error:', {
-    error: err.message,
-    stack: err.stack,
-    path: req.path,
-    method: req.method,
-  });
-
-  res.status(err.status || 500).json({
-    error: process.env.NODE_ENV === 'production' 
-      ? 'Internal server error' 
-      : err.message,
-  });
+  logger.error('Unhandled error:', err);
+  res.status(500).json({ error: 'Internal server error' });
 });
 
-// 404 handler
-app.use((req, res) => {
-  res.status(404).json({ error: 'Not found' });
+// Start server
+app.listen(PORT, () => {
+  logger.info(`Server running on port ${PORT}`);
+  console.log(`🚀 Server ready at http://localhost:${PORT}`);
+  console.log(`📊 API available at http://localhost:${PORT}/api`);
 });
 
 // Graceful shutdown
-process.on('SIGTERM', () => {
-  logger.info('SIGTERM signal received: closing HTTP server');
-  db.close();
-  process.exit(0);
-});
-
 process.on('SIGINT', () => {
-  logger.info('SIGINT signal received: closing HTTP server');
+  logger.info('Shutting down gracefully...');
   db.close();
   process.exit(0);
 });
 
-app.listen(PORT, () => {
-  logger.info(`Server running on port ${PORT}`);
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
-  console.log(`📊 API available at http://localhost:${PORT}/api`);
+process.on('SIGTERM', () => {
+  logger.info('Shutting down gracefully...');
+  db.close();
+  process.exit(0);
 });
