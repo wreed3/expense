@@ -1,200 +1,112 @@
-import Redis from 'ioredis';
-import { logger } from './logger';
+import { createClient } from 'redis';
+import type { RedisClientType } from 'redis';
 
-export class CacheService {
-  private redis: Redis | null = null;
-  private enabled: boolean = false;
-  private defaultTTL: number = 3600; // 1 hour
+class CacheManager {
+  private client: RedisClientType | null = null;
+  private isEnabled: boolean = false;
 
-  constructor() {
-    this.initialize();
-  }
+  async initialize() {
+    if (process.env.REDIS_URL) {
+      try {
+        this.client = createClient({
+          url: process.env.REDIS_URL,
+        });
 
-  private initialize() {
-    const redisUrl = process.env.REDIS_URL;
-    
-    if (!redisUrl) {
-      logger.info('Redis not configured, caching disabled');
-      return;
-    }
+        this.client.on('error', (err) => {
+          console.error('Redis Client Error:', err);
+          this.isEnabled = false;
+        });
 
-    try {
-      this.redis = new Redis(redisUrl, {
-        retryStrategy: (times) => {
-          const delay = Math.min(times * 50, 2000);
-          return delay;
-        },
-        maxRetriesPerRequest: 3
-      });
-
-      this.redis.on('connect', () => {
-        this.enabled = true;
-        logger.info('Redis connected successfully');
-      });
-
-      this.redis.on('error', (error) => {
-        logger.error('Redis error:', error);
-        this.enabled = false;
-      });
-    } catch (error) {
-      logger.error('Failed to initialize Redis:', error);
-      this.enabled = false;
+        await this.client.connect();
+        this.isEnabled = true;
+        console.log('Redis cache initialized successfully');
+      } catch (error) {
+        console.warn('Redis not available, caching disabled:', error);
+        this.isEnabled = false;
+      }
+    } else {
+      console.log('Redis URL not configured, caching disabled');
+      this.isEnabled = false;
     }
   }
 
-  /**
-   * Get value from cache
-   */
   async get<T>(key: string): Promise<T | null> {
-    if (!this.enabled || !this.redis) return null;
+    if (!this.isEnabled || !this.client) return null;
 
     try {
-      const value = await this.redis.get(key);
-      if (!value) return null;
-      return JSON.parse(value) as T;
+      const value = await this.client.get(key);
+      return value ? JSON.parse(value) : null;
     } catch (error) {
-      logger.error('Cache get error:', error);
+      console.error('Cache get error:', error);
       return null;
     }
   }
 
-  /**
-   * Set value in cache
-   */
-  async set(key: string, value: any, ttl: number = this.defaultTTL): Promise<boolean> {
-    if (!this.enabled || !this.redis) return false;
+  async set(key: string, value: any, ttlSeconds: number = 300): Promise<void> {
+    if (!this.isEnabled || !this.client) return;
 
     try {
-      const serialized = JSON.stringify(value);
-      await this.redis.setex(key, ttl, serialized);
-      return true;
+      await this.client.setEx(key, ttlSeconds, JSON.stringify(value));
     } catch (error) {
-      logger.error('Cache set error:', error);
-      return false;
+      console.error('Cache set error:', error);
     }
   }
 
-  /**
-   * Delete value from cache
-   */
-  async delete(key: string): Promise<boolean> {
-    if (!this.enabled || !this.redis) return false;
+  async del(key: string): Promise<void> {
+    if (!this.isEnabled || !this.client) return;
 
     try {
-      await this.redis.del(key);
-      return true;
+      await this.client.del(key);
     } catch (error) {
-      logger.error('Cache delete error:', error);
-      return false;
+      console.error('Cache delete error:', error);
     }
   }
 
-  /**
-   * Delete multiple keys matching pattern
-   */
-  async deletePattern(pattern: string): Promise<number> {
-    if (!this.enabled || !this.redis) return 0;
+  async delPattern(pattern: string): Promise<void> {
+    if (!this.isEnabled || !this.client) return;
 
     try {
-      const keys = await this.redis.keys(pattern);
-      if (keys.length === 0) return 0;
-      
-      const deleted = await this.redis.del(...keys);
-      return deleted;
-    } catch (error) {
-      logger.error('Cache delete pattern error:', error);
-      return 0;
-    }
-  }
-
-  /**
-   * Check if key exists
-   */
-  async exists(key: string): Promise<boolean> {
-    if (!this.enabled || !this.redis) return false;
-
-    try {
-      const result = await this.redis.exists(key);
-      return result === 1;
-    } catch (error) {
-      logger.error('Cache exists error:', error);
-      return false;
-    }
-  }
-
-  /**
-   * Increment counter
-   */
-  async increment(key: string, ttl?: number): Promise<number> {
-    if (!this.enabled || !this.redis) return 0;
-
-    try {
-      const value = await this.redis.incr(key);
-      if (ttl && value === 1) {
-        await this.redis.expire(key, ttl);
+      const keys = await this.client.keys(pattern);
+      if (keys.length > 0) {
+        await this.client.del(keys);
       }
-      return value;
     } catch (error) {
-      logger.error('Cache increment error:', error);
-      return 0;
+      console.error('Cache pattern delete error:', error);
     }
   }
 
-  /**
-   * Get multiple values at once
-   */
-  async mget<T>(keys: string[]): Promise<(T | null)[]> {
-    if (!this.enabled || !this.redis || keys.length === 0) {
-      return keys.map(() => null);
-    }
+  async flush(): Promise<void> {
+    if (!this.isEnabled || !this.client) return;
 
     try {
-      const values = await this.redis.mget(...keys);
-      return values.map(v => v ? JSON.parse(v) as T : null);
+      await this.client.flushAll();
     } catch (error) {
-      logger.error('Cache mget error:', error);
-      return keys.map(() => null);
+      console.error('Cache flush error:', error);
     }
   }
 
-  /**
-   * Clear all cache
-   */
-  async flush(): Promise<boolean> {
-    if (!this.enabled || !this.redis) return false;
-
-    try {
-      await this.redis.flushdb();
-      return true;
-    } catch (error) {
-      logger.error('Cache flush error:', error);
-      return false;
+  async disconnect(): Promise<void> {
+    if (this.client) {
+      await this.client.quit();
+      this.isEnabled = false;
     }
   }
 
-  /**
-   * Close Redis connection
-   */
-  async close(): Promise<void> {
-    if (this.redis) {
-      await this.redis.quit();
-      this.enabled = false;
-    }
+  getIsEnabled(): boolean {
+    return this.isEnabled;
   }
 }
 
-// Singleton instance
-export const cache = new CacheService();
+export const cacheManager = new CacheManager();
 
 // Cache key generators
-export const CacheKeys = {
-  user: (userId: number) => `user:${userId}`,
-  expenses: (userId: number, filters: string) => `expenses:${userId}:${filters}`,
-  categories: (userId: number) => `categories:${userId}`,
-  budgets: (userId: number, month: string) => `budgets:${userId}:${month}`,
-  analytics: (userId: number, type: string, params: string) => `analytics:${userId}:${type}:${params}`,
-  exchangeRate: (from: string, to: string, date: string) => `rate:${from}:${to}:${date}`,
-  tags: (userId: number) => `tags:${userId}`,
-  customFields: (userId: number) => `custom_fields:${userId}`,
-  savedSearches: (userId: number) => `saved_searches:${userId}`
+export const cacheKeys = {
+  expenses: (userId: number) => `expenses:user:${userId}`,
+  expense: (id: number) => `expense:${id}`,
+  categories: (userId: number) => `categories:user:${userId}`,
+  budgets: (userId: number) => `budgets:user:${userId}`,
+  analytics: (userId: number, type: string) => `analytics:${type}:user:${userId}`,
+  tags: (userId: number) => `tags:user:${userId}`,
+  customFields: (userId: number) => `custom_fields:user:${userId}`,
+  currencies: () => 'currencies:all',
 };
