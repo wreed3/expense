@@ -1,5 +1,12 @@
 import React from 'react';
-import { CustomField } from '../types';
+
+interface CustomField {
+  id: number;
+  name: string;
+  field_type: 'text' | 'number' | 'date' | 'boolean' | 'select';
+  options?: string[];
+  is_required: boolean;
+}
 
 interface CustomFieldInputProps {
   field: CustomField;
@@ -27,7 +34,7 @@ export default function CustomFieldInput({ field, value, onChange, className = '
           <input
             type="number"
             value={value || ''}
-            onChange={(e) => onChange(e.target.value)}
+            onChange={(e) => onChange(parseFloat(e.target.value))}
             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
             required={field.is_required}
             step="any"
@@ -77,9 +84,9 @@ export default function CustomFieldInput({ field, value, onChange, className = '
             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
             required={field.is_required}
           >
-            <option value="">Select an option...</option>
-            {field.options?.map((option, index) => (
-              <option key={index} value={option}>
+            <option value="">Select an option</option>
+            {field.options?.map((option) => (
+              <option key={option} value={option}>
                 {option}
               </option>
             ))}

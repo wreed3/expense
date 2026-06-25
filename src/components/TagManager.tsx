@@ -1,12 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { useTagStore } from '../stores/tagStore';
-import { Tag } from '../types';
 import toast from 'react-hot-toast';
 
 export default function TagManager() {
   const { tags, fetchTags, addTag, updateTag, deleteTag, isLoading } = useTagStore();
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingTag, setEditingTag] = useState<Tag | null>(null);
+  const [editingTag, setEditingTag] = useState<any>(null);
   const [formData, setFormData] = useState({
     name: '',
     color: '#3B82F6',
@@ -34,7 +33,7 @@ export default function TagManager() {
     }
   };
 
-  const handleEdit = (tag: Tag) => {
+  const handleEdit = (tag: any) => {
     setEditingTag(tag);
     setFormData({
       name: tag.name,
@@ -68,7 +67,7 @@ export default function TagManager() {
           onClick={() => setIsModalOpen(true)}
           className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
         >
-          Add Tag
+          Create Tag
         </button>
       </div>
 
@@ -77,8 +76,9 @@ export default function TagManager() {
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
         </div>
       ) : tags.length === 0 ? (
-        <div className="text-center py-8 text-gray-500">
-          <p>No tags yet. Create your first tag to get started!</p>
+        <div className="text-center py-12 text-gray-500">
+          <div className="text-4xl mb-3">🏷️</div>
+          <p>No tags yet. Create your first tag to organize expenses.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -98,23 +98,21 @@ export default function TagManager() {
                 <div className="flex gap-2">
                   <button
                     onClick={() => handleEdit(tag)}
-                    className="text-blue-600 hover:text-blue-800"
+                    className="text-blue-600 hover:text-blue-800 text-sm"
                   >
                     Edit
                   </button>
                   <button
                     onClick={() => handleDelete(tag.id)}
-                    className="text-red-600 hover:text-red-800"
+                    className="text-red-600 hover:text-red-800 text-sm"
                   >
                     Delete
                   </button>
                 </div>
               </div>
-              {tag.usage_count !== undefined && (
-                <p className="text-sm text-gray-500">
-                  Used in {tag.usage_count} expense{tag.usage_count !== 1 ? 's' : ''}
-                </p>
-              )}
+              <p className="text-sm text-gray-500">
+                Used in {tag.usage_count || 0} expense{tag.usage_count !== 1 ? 's' : ''}
+              </p>
             </div>
           ))}
         </div>
@@ -123,13 +121,13 @@ export default function TagManager() {
       {isModalOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 w-full max-w-md">
-            <h3 className="text-xl font-bold mb-4">
+            <h3 className="text-lg font-bold mb-4">
               {editingTag ? 'Edit Tag' : 'Create Tag'}
             </h3>
             <form onSubmit={handleSubmit}>
               <div className="mb-4">
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Name
+                  Tag Name
                 </label>
                 <input
                   type="text"
@@ -140,16 +138,17 @@ export default function TagManager() {
                   maxLength={50}
                 />
               </div>
+
               <div className="mb-6">
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Color
                 </label>
-                <div className="flex gap-2">
+                <div className="flex items-center gap-2">
                   <input
                     type="color"
                     value={formData.color}
                     onChange={(e) => setFormData({ ...formData, color: e.target.value })}
-                    className="w-12 h-10 border border-gray-300 rounded cursor-pointer"
+                    className="w-12 h-10 rounded cursor-pointer"
                   />
                   <input
                     type="text"
@@ -160,7 +159,8 @@ export default function TagManager() {
                   />
                 </div>
               </div>
-              <div className="flex gap-2 justify-end">
+
+              <div className="flex justify-end gap-2">
                 <button
                   type="button"
                   onClick={handleClose}

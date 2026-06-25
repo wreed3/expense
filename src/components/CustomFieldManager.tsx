@@ -1,18 +1,26 @@
 import React, { useEffect, useState } from 'react';
 import { useCustomFieldStore } from '../stores/customFieldStore';
-import { CustomField } from '../types';
 import toast from 'react-hot-toast';
+
+const FIELD_TYPES = [
+  { value: 'text', label: 'Text', icon: '📝' },
+  { value: 'number', label: 'Number', icon: '🔢' },
+  { value: 'date', label: 'Date', icon: '📅' },
+  { value: 'boolean', label: 'Yes/No', icon: '✓✗' },
+  { value: 'select', label: 'Dropdown', icon: '📋' },
+];
 
 export default function CustomFieldManager() {
   const { customFields, fetchCustomFields, addCustomField, updateCustomField, deleteCustomField, isLoading } = useCustomFieldStore();
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingField, setEditingField] = useState<CustomField | null>(null);
+  const [editingField, setEditingField] = useState<any>(null);
   const [formData, setFormData] = useState({
     name: '',
     field_type: 'text' as 'text' | 'number' | 'date' | 'boolean' | 'select',
     options: [] as string[],
     is_required: false,
   });
+  const [optionInput, setOptionInput] = useState('');
 
   useEffect(() => {
     fetchCustomFields();
@@ -20,6 +28,12 @@ export default function CustomFieldManager() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    if (formData.field_type === 'select' && formData.options.length === 0) {
+      toast.error('Please add at least one option for dropdown field');
+      return;
+    }
+
     try {
       const data = {
         ...formData,
@@ -39,7 +53,7 @@ export default function CustomFieldManager() {
     }
   };
 
-  const handleEdit = (field: CustomField) => {
+  const handleEdit = (field: any) => {
     setEditingField(field);
     setFormData({
       name: field.name,
@@ -70,48 +84,38 @@ export default function CustomFieldManager() {
       options: [],
       is_required: false,
     });
+    setOptionInput('');
   };
 
   const addOption = () => {
-    setFormData({
-      ...formData,
-      options: [...formData.options, ''],
-    });
-  };
-
-  const updateOption = (index: number, value: string) => {
-    const newOptions = [...formData.options];
-    newOptions[index] = value;
-    setFormData({ ...formData, options: newOptions });
+    if (optionInput.trim()) {
+      setFormData({
+        ...formData,
+        options: [...formData.options, optionInput.trim()]
+      });
+      setOptionInput('');
+    }
   };
 
   const removeOption = (index: number) => {
     setFormData({
       ...formData,
-      options: formData.options.filter((_, i) => i !== index),
+      options: formData.options.filter((_, i) => i !== index)
     });
-  };
-
-  const getFieldTypeLabel = (type: string) => {
-    const labels: Record<string, string> = {
-      text: 'Text',
-      number: 'Number',
-      date: 'Date',
-      boolean: 'Yes/No',
-      select: 'Dropdown',
-    };
-    return labels[type] || type;
   };
 
   return (
     <div className="bg-white rounded-lg shadow p-6">
       <div className="flex justify-between items-center mb-6">
-        <h2 className="text-2xl font-bold text-gray-900">Custom Fields</h2>
+        <div>
+          <h2 className="text-2xl font-bold text-gray-900">Custom Fields</h2>
+          <p className="text-gray-600 mt-1">Add custom fields to track additional expense information</p>
+        </div>
         <button
           onClick={() => setIsModalOpen(true)}
           className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
         >
-          Add Custom Field
+          Create Field
         </button>
       </div>
 
@@ -120,8 +124,9 @@ export default function CustomFieldManager() {
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
         </div>
       ) : customFields.length === 0 ? (
-        <div className="text-center py-8 text-gray-500">
-          <p>No custom fields yet. Create your first custom field to add extra information to expenses!</p>
+        <div className="text-center py-12 text-gray-500">
+          <div className="text-4xl mb-3">📝</div>
+          <p>No custom fields yet. Create fields to capture additional expense details.</p>
         </div>
       ) : (
         <div className="space-y-4">
@@ -133,32 +138,47 @@ export default function CustomFieldManager() {
               <div className="flex items-center justify-between">
                 <div className="flex-1">
                   <div className="flex items-center gap-2 mb-1">
-                    <h3 className="font-medium text-gray-900">{field.name}</h3>
+                    <span className="text-2xl">
+                      {FIELD_TYPES.find(t => t.value === field.field_type)?.icon}
+                    </span>
+                    <span className="font-medium text-gray-900">{field.name}</span>
                     {field.is_required && (
-                      <span className="text-xs px-2 py-0.5 bg-red-100 text-red-700 rounded-full">
+                      <span className="px-2 py-1 text-xs bg-red-100 text-red-800 rounded">
                         Required
                       </span>
                     )}
                   </div>
-                  <p className="text-sm text-gray-500">
-                    Type: {getFieldTypeLabel(field.field_type)}
-                  </p>
+                  <div className="text-sm text-gray-500">
+                    Type: {FIELD_TYPES.find(t => t.value === field.field_type)?.label}
+                    {field.field_type === 'select' && field.options && (
+                      <span className="ml-2">
+                        ({field.options.length} options)
+                      </span>
+                    )}
+                  </div>
                   {field.field_type === 'select' && field.options && (
-                    <p className="text-sm text-gray-500 mt-1">
-                      Options: {field.options.join(', ')}
-                    </p>
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {field.options.map((option, i) => (
+                        <span
+                          key={i}
+                          className="px-2 py-1 text-xs bg-gray-100 text-gray-700 rounded"
+                        >
+                          {option}
+                        </span>
+                      ))}
+                    </div>
                   )}
                 </div>
                 <div className="flex gap-2">
                   <button
                     onClick={() => handleEdit(field)}
-                    className="text-blue-600 hover:text-blue-800"
+                    className="text-blue-600 hover:text-blue-800 text-sm"
                   >
                     Edit
                   </button>
                   <button
                     onClick={() => handleDelete(field.id)}
-                    className="text-red-600 hover:text-red-800"
+                    className="text-red-600 hover:text-red-800 text-sm"
                   >
                     Delete
                   </button>
@@ -170,9 +190,9 @@ export default function CustomFieldManager() {
       )}
 
       {isModalOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
-            <h3 className="text-xl font-bold mb-4">
+            <h3 className="text-lg font-bold mb-4">
               {editingField ? 'Edit Custom Field' : 'Create Custom Field'}
             </h3>
             <form onSubmit={handleSubmit}>
@@ -203,11 +223,11 @@ export default function CustomFieldManager() {
                   })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  <option value="text">Text</option>
-                  <option value="number">Number</option>
-                  <option value="date">Date</option>
-                  <option value="boolean">Yes/No</option>
-                  <option value="select">Dropdown</option>
+                  {FIELD_TYPES.map(type => (
+                    <option key={type.value} value={type.value}>
+                      {type.icon} {type.label}
+                    </option>
+                  ))}
                 </select>
               </div>
 
@@ -216,33 +236,36 @@ export default function CustomFieldManager() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Dropdown Options
                   </label>
-                  <div className="space-y-2">
-                    {formData.options.map((option, index) => (
-                      <div key={index} className="flex gap-2">
-                        <input
-                          type="text"
-                          value={option}
-                          onChange={(e) => updateOption(index, e.target.value)}
-                          className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          placeholder={`Option ${index + 1}`}
-                          required
-                        />
-                        <button
-                          type="button"
-                          onClick={() => removeOption(index)}
-                          className="px-3 py-2 text-red-600 hover:bg-red-50 rounded-md"
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    ))}
+                  <div className="flex gap-2 mb-2">
+                    <input
+                      type="text"
+                      value={optionInput}
+                      onChange={(e) => setOptionInput(e.target.value)}
+                      onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), addOption())}
+                      placeholder="Add option"
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
                     <button
                       type="button"
                       onClick={addOption}
-                      className="w-full px-3 py-2 border border-dashed border-gray-300 rounded-md text-gray-600 hover:bg-gray-50"
+                      className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700"
                     >
-                      + Add Option
+                      Add
                     </button>
+                  </div>
+                  <div className="space-y-1">
+                    {formData.options.map((option, index) => (
+                      <div key={index} className="flex items-center justify-between bg-gray-50 px-3 py-2 rounded">
+                        <span className="text-sm">{option}</span>
+                        <button
+                          type="button"
+                          onClick={() => removeOption(index)}
+                          className="text-red-600 hover:text-red-800"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
@@ -255,11 +278,13 @@ export default function CustomFieldManager() {
                     onChange={(e) => setFormData({ ...formData, is_required: e.target.checked })}
                     className="rounded"
                   />
-                  <span className="text-sm text-gray-700">Required field</span>
+                  <span className="text-sm font-medium text-gray-700">
+                    Required field
+                  </span>
                 </label>
               </div>
 
-              <div className="flex gap-2 justify-end">
+              <div className="flex justify-end gap-2">
                 <button
                   type="button"
                   onClick={handleClose}

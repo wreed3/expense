@@ -68,94 +68,113 @@ export default function CurrencySettings() {
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
         </div>
       ) : (
-        <div className="space-y-4">
-          {currencies.map(currency => (
-            <div
-              key={currency.code}
-              className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow"
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex-1">
-                  <div className="flex items-center gap-3 mb-2">
-                    <span className="text-2xl">{currency.symbol}</span>
-                    <div>
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Currency
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Symbol
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Exchange Rate
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Status
+                </th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Actions
+                </th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {currencies.map(currency => (
+                <tr key={currency.code}>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <div className="text-sm font-medium text-gray-900">{currency.code}</div>
+                    <div className="text-sm text-gray-500">{currency.name}</div>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    {currency.symbol}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    {editingRates[currency.code] !== undefined ? (
                       <div className="flex items-center gap-2">
-                        <h3 className="font-bold text-gray-900">{currency.code}</h3>
-                        {currency.is_default && (
-                          <span className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded-full">
-                            Default
-                          </span>
-                        )}
+                        <input
+                          type="number"
+                          step="0.0001"
+                          value={editingRates[currency.code]}
+                          onChange={(e) => setEditingRates(prev => ({
+                            ...prev,
+                            [currency.code]: e.target.value
+                          }))}
+                          className="w-32 px-2 py-1 border border-gray-300 rounded text-sm"
+                        />
+                        <button
+                          onClick={() => handleUpdateRate(currency.code)}
+                          className="text-green-600 hover:text-green-800"
+                        >
+                          ✓
+                        </button>
+                        <button
+                          onClick={() => cancelEditing(currency.code)}
+                          className="text-red-600 hover:text-red-800"
+                        >
+                          ✗
+                        </button>
                       </div>
-                      <p className="text-sm text-gray-600">{currency.name}</p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-4">
-                    <div className="flex-1">
-                      <label className="text-sm text-gray-600">Exchange Rate (to USD)</label>
-                      {editingRates[currency.code] !== undefined ? (
-                        <div className="flex items-center gap-2 mt-1">
-                          <input
-                            type="number"
-                            value={editingRates[currency.code]}
-                            onChange={(e) => setEditingRates(prev => ({
-                              ...prev,
-                              [currency.code]: e.target.value,
-                            }))}
-                            step="0.0001"
-                            className="flex-1 px-3 py-1 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          />
-                          <button
-                            onClick={() => handleUpdateRate(currency.code)}
-                            className="px-3 py-1 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm"
-                          >
-                            Save
-                          </button>
-                          <button
-                            onClick={() => cancelEditing(currency.code)}
-                            className="px-3 py-1 text-gray-600 hover:bg-gray-100 rounded-md text-sm"
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className="font-mono text-lg">{currency.exchange_rate.toFixed(4)}</span>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-gray-900">
+                          {currency.exchange_rate.toFixed(4)}
+                        </span>
+                        {!currency.is_default && (
                           <button
                             onClick={() => startEditing(currency.code, currency.exchange_rate)}
                             className="text-blue-600 hover:text-blue-800 text-sm"
                           >
                             Edit
                           </button>
-                        </div>
-                      )}
-                    </div>
-
+                        )}
+                      </div>
+                    )}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    {currency.is_default ? (
+                      <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
+                        Default
+                      </span>
+                    ) : (
+                      <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-gray-100 text-gray-800">
+                        Active
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                     {!currency.is_default && (
                       <button
                         onClick={() => handleSetDefault(currency.code)}
-                        className="px-4 py-2 border border-blue-600 text-blue-600 rounded-md hover:bg-blue-50"
+                        className="text-blue-600 hover:text-blue-900"
                       >
                         Set as Default
                       </button>
                     )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          ))}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 
-      <div className="mt-6 p-4 bg-blue-50 rounded-lg">
-        <h4 className="font-medium text-blue-900 mb-2">About Exchange Rates</h4>
-        <ul className="text-sm text-blue-800 space-y-1">
-          <li>• Exchange rates are relative to USD (1 USD = X currency)</li>
-          <li>• Update rates regularly to ensure accurate conversions</li>
-          <li>• Your default currency is used for budgets and reports</li>
-          <li>• Historical expenses keep their original currency and amount</li>
-        </ul>
+      <div className="mt-6 p-4 bg-blue-50 rounded-md">
+        <h3 className="text-sm font-medium text-blue-900 mb-2">About Exchange Rates</h3>
+        <p className="text-sm text-blue-700">
+          Exchange rates are relative to your default currency. When you change the default currency,
+          all amounts will be converted accordingly. Update rates regularly for accurate conversions.
+        </p>
       </div>
     </div>
   );

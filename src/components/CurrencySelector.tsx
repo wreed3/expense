@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { useCurrencyStore } from '../stores/currencyStore';
-import { Currency } from '../types';
 
 interface CurrencySelectorProps {
   value: string;
@@ -18,7 +17,6 @@ export default function CurrencySelector({
   className = ''
 }: CurrencySelectorProps) {
   const { currencies, defaultCurrency, fetchCurrencies } = useCurrencyStore();
-  const [selectedCurrency, setSelectedCurrency] = useState<Currency | null>(null);
 
   useEffect(() => {
     if (currencies.length === 0) {
@@ -26,14 +24,11 @@ export default function CurrencySelector({
     }
   }, []);
 
-  useEffect(() => {
-    const currency = currencies.find(c => c.code === value);
-    setSelectedCurrency(currency || defaultCurrency);
-  }, [value, currencies, defaultCurrency]);
-
   const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     onChange(e.target.value);
   };
+
+  const selectedCurrency = currencies.find(c => c.code === value);
 
   return (
     <div className={className}>
@@ -60,7 +55,7 @@ export default function CurrencySelector({
       </div>
       {selectedCurrency && !selectedCurrency.is_default && (
         <p className="mt-1 text-xs text-gray-500">
-          Exchange rate: {selectedCurrency.exchange_rate.toFixed(4)}
+          Exchange rate: {selectedCurrency.exchange_rate.toFixed(4)} to {defaultCurrency?.code || 'USD'}
         </p>
       )}
     </div>

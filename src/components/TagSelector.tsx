@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { useTagStore } from '../stores/tagStore';
-import { Tag } from '../types';
 
 interface TagSelectorProps {
   selectedTags: number[];
@@ -67,7 +66,7 @@ export default function TagSelector({
                     e.stopPropagation();
                     toggleTag(tag.id);
                   }}
-                  className="ml-1 hover:opacity-70"
+                  className="ml-1 hover:text-red-600"
                 >
                   ×
                 </button>
@@ -77,17 +76,19 @@ export default function TagSelector({
         </div>
 
         {isOpen && (
-          <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-60 overflow-auto">
-            {tags.length === 0 ? (
-              <div className="px-3 py-2 text-gray-500 text-sm">
-                No tags available
-              </div>
-            ) : (
-              tags.map(tag => (
+          <>
+            <div
+              className="fixed inset-0 z-10"
+              onClick={() => setIsOpen(false)}
+            />
+            <div className="absolute z-20 mt-1 w-full bg-white border border-gray-300 rounded-md shadow-lg max-h-60 overflow-auto">
+              {tags.map(tag => (
                 <div
                   key={tag.id}
                   onClick={() => toggleTag(tag.id)}
-                  className="px-3 py-2 hover:bg-gray-100 cursor-pointer flex items-center gap-2"
+                  className={`px-3 py-2 cursor-pointer hover:bg-gray-100 flex items-center gap-2 ${
+                    selectedTags.includes(tag.id) ? 'bg-blue-50' : ''
+                  }`}
                 >
                   <input
                     type="checkbox"
@@ -101,9 +102,14 @@ export default function TagSelector({
                   />
                   <span>{tag.name}</span>
                 </div>
-              ))
-            )}
-          </div>
+              ))}
+              {tags.length === 0 && (
+                <div className="px-3 py-2 text-gray-500 text-center">
+                  No tags available. Create tags in Settings.
+                </div>
+              )}
+            </div>
+          </>
         )}
       </div>
     </div>
