@@ -15,11 +15,6 @@ const customFieldSchema = z.object({
   is_required: z.boolean().optional()
 });
 
-const customFieldValueSchema = z.object({
-  custom_field_id: z.number().int().positive(),
-  value: z.string()
-});
-
 // Get all custom fields for user
 router.get('/', authenticateToken, async (req, res) => {
   try {
@@ -74,14 +69,15 @@ router.post('/', authenticateToken, async (req, res) => {
       validated.is_required || false
     );
 
-    const field = db.prepare('SELECT * FROM custom_fields WHERE id = ?').get(result.lastInsertRowid);
+    const field = db.prepare('SELECT * FROM custom_fields WHERE id = ?')
+      .get(result.lastInsertRowid) as any;
     
     // Invalidate cache
     await cache.delete(CacheKeys.customFields(userId));
     
     res.status(201).json({
       ...field,
-      options: (field as any).options ? JSON.parse((field as any).options) : null
+      options: field.options ? JSON.parse(field.options) : null
     });
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -124,14 +120,14 @@ router.put('/:id', authenticateToken, async (req, res) => {
       userId
     );
 
-    const field = db.prepare('SELECT * FROM custom_fields WHERE id = ?').get(fieldId);
+    const field = db.prepare('SELECT * FROM custom_fields WHERE id = ?').get(fieldId) as any;
     
     // Invalidate cache
     await cache.delete(CacheKeys.customFields(userId));
     
     res.json({
       ...field,
-      options: (field as any).options ? JSON.parse((field as any).options) : null
+      options: field.options ? JSON.parse(field.options) : null
     });
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -158,105 +154,17 @@ router.delete('/:id', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'Custom field not found' });
     }
 
-    // Delete field (cascade will remove custom_field_values)
+    // Delete field (cascade will remove custom_field_values entries)
     const deleteStmt = db.prepare('DELETE FROM custom_fields WHERE id = ? AND user_id = ?');
     deleteStmt.run(fieldId, userId);
     
     // Invalidate cache
     await cache.delete(CacheKeys.customFields(userId));
-    await cache.deletePattern(`expenses:${userId}:*`);
     
     res.status(204).send();
   } catch (error) {
     logger.error('Error deleting custom field:', error);
     res.status(500).json({ error: 'Failed to delete custom field' });
-  }
-});
-
-// Set custom field value for expense
-router.post('/expense/:expenseId', authenticateToken, async (req, res) => {
-  try {
-    const userId = req.user!.id;
-    const expenseId = parseInt(req.params.expenseId);
-    const values = z.array(customFieldValueSchema).parse(req.body);
-    
-    const db = getDatabase();
-    
-    // Verify expense ownership
-    const expenseStmt = db.prepare('SELECT id FROM expenses WHERE id = ? AND user_id = ?');
-    const expense = expenseStmt.get(expenseId, userId);
-    
-    if (!expense) {
-      return res.status(404).json({ error: 'Expense not found' });
-    }
-
-    // Verify all custom fields belong to user
-    const fieldIds = values.map(v => v.custom_field_id);
-    const fieldStmt = db.prepare(`
-      SELECT COUNT(*) as count FROM custom_fields 
-      WHERE id IN (${fieldIds.map(() => '?').join(',')}) AND user_id = ?
-    `);
-    const fieldCheck = fieldStmt.get(...fieldIds, userId) as { count: number };
-    
-    if (fieldCheck.count !== fieldIds.length) {
-      return res.status(400).json({ error: 'Invalid custom field IDs' });
-    }
-
-    // Remove existing values
-    const deleteStmt = db.prepare('DELETE FROM custom_field_values WHERE expense_id = ?');
-    deleteStmt.run(expenseId);
-
-    // Add new values
-    const insertStmt = db.prepare(`
-      INSERT INTO custom_field_values (expense_id, custom_field_id, value) 
-      VALUES (?, ?, ?)
-    `);
-    
-    for (const value of values) {
-      insertStmt.run(expenseId, value.custom_field_id, value.value);
-    }
-    
-    // Invalidate cache
-    await cache.deletePattern(`expenses:${userId}:*`);
-    
-    res.json({ success: true });
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      return res.status(400).json({ error: 'Invalid request data', details: error.errors });
-    }
-    logger.error('Error setting custom field values:', error);
-    res.status(500).json({ error: 'Failed to set custom field values' });
-  }
-});
-
-// Get custom field values for expense
-router.get('/expense/:expenseId', authenticateToken, async (req, res) => {
-  try {
-    const userId = req.user!.id;
-    const expenseId = parseInt(req.params.expenseId);
-    
-    const db = getDatabase();
-    
-    // Verify expense ownership
-    const expenseStmt = db.prepare('SELECT id FROM expenses WHERE id = ? AND user_id = ?');
-    const expense = expenseStmt.get(expenseId, userId);
-    
-    if (!expense) {
-      return res.status(404).json({ error: 'Expense not found' });
-    }
-
-    const stmt = db.prepare(`
-      SELECT cfv.*, cf.name, cf.field_type
-      FROM custom_field_values cfv
-      INNER JOIN custom_fields cf ON cfv.custom_field_id = cf.id
-      WHERE cfv.expense_id = ?
-    `);
-    
-    const values = stmt.all(expenseId);
-    res.json(values);
-  } catch (error) {
-    logger.error('Error fetching custom field values:', error);
-    res.status(500).json({ error: 'Failed to fetch custom field values' });
   }
 });
 
