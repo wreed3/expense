@@ -97,7 +97,7 @@ export const useAnalyticsStore = create<AnalyticsState>((set, get) => ({
       });
       set({ categoryComparison: response.data });
     } catch (error: any) {
-      console.error('Failed to fetch category comparison:', error);
+      set({ error: error.response?.data?.error || 'Failed to fetch category comparison' });
     }
   },
 
@@ -106,7 +106,7 @@ export const useAnalyticsStore = create<AnalyticsState>((set, get) => ({
       const response = await api.get('/analytics-advanced/budget-performance');
       set({ budgetPerformance: response.data });
     } catch (error: any) {
-      console.error('Failed to fetch budget performance:', error);
+      set({ error: error.response?.data?.error || 'Failed to fetch budget performance' });
     }
   },
 
@@ -117,7 +117,7 @@ export const useAnalyticsStore = create<AnalyticsState>((set, get) => ({
       });
       set({ heatmapData: response.data });
     } catch (error: any) {
-      console.error('Failed to fetch heatmap:', error);
+      set({ error: error.response?.data?.error || 'Failed to fetch heatmap data' });
     }
   },
 
@@ -128,7 +128,7 @@ export const useAnalyticsStore = create<AnalyticsState>((set, get) => ({
       });
       set({ topExpenses: response.data });
     } catch (error: any) {
-      console.error('Failed to fetch top expenses:', error);
+      set({ error: error.response?.data?.error || 'Failed to fetch top expenses' });
     }
   },
 
@@ -137,7 +137,7 @@ export const useAnalyticsStore = create<AnalyticsState>((set, get) => ({
       const response = await api.get('/analytics-advanced/month-comparison');
       set({ monthComparison: response.data });
     } catch (error: any) {
-      console.error('Failed to fetch month comparison:', error);
+      set({ error: error.response?.data?.error || 'Failed to fetch month comparison' });
     }
   },
 
@@ -146,7 +146,7 @@ export const useAnalyticsStore = create<AnalyticsState>((set, get) => ({
       const response = await api.get('/analytics-advanced/insights');
       set({ insights: response.data });
     } catch (error: any) {
-      console.error('Failed to fetch insights:', error);
+      set({ error: error.response?.data?.error || 'Failed to fetch insights' });
     }
   },
 
@@ -154,7 +154,7 @@ export const useAnalyticsStore = create<AnalyticsState>((set, get) => ({
     set({ isLoading: true, error: null });
     try {
       await Promise.all([
-        get().fetchTrends(),
+        get().fetchTrends(6),
         get().fetchCategoryComparison(startDate, endDate),
         get().fetchBudgetPerformance(),
         get().fetchHeatmap(startDate, endDate),

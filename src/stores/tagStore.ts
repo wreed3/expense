@@ -1,6 +1,25 @@
 import { create } from 'zustand';
-import { TagState, Tag } from '../types';
 import api from '../utils/api';
+
+interface Tag {
+  id: number;
+  user_id: number;
+  name: string;
+  color?: string;
+  created_at: string;
+  usage_count?: number;
+}
+
+interface TagState {
+  tags: Tag[];
+  isLoading: boolean;
+  error: string | null;
+  
+  fetchTags: () => Promise<void>;
+  addTag: (tag: Partial<Tag>) => Promise<void>;
+  updateTag: (id: number, tag: Partial<Tag>) => Promise<void>;
+  deleteTag: (id: number) => Promise<void>;
+}
 
 export const useTagStore = create<TagState>((set) => ({
   tags: [],

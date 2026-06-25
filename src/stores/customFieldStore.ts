@@ -1,6 +1,26 @@
 import { create } from 'zustand';
-import { CustomFieldState, CustomField } from '../types';
 import api from '../utils/api';
+
+interface CustomField {
+  id: number;
+  user_id: number;
+  name: string;
+  field_type: 'text' | 'number' | 'date' | 'boolean' | 'select';
+  options?: string[];
+  is_required: boolean;
+  created_at: string;
+}
+
+interface CustomFieldState {
+  customFields: CustomField[];
+  isLoading: boolean;
+  error: string | null;
+  
+  fetchCustomFields: () => Promise<void>;
+  addCustomField: (field: Partial<CustomField>) => Promise<void>;
+  updateCustomField: (id: number, field: Partial<CustomField>) => Promise<void>;
+  deleteCustomField: (id: number) => Promise<void>;
+}
 
 export const useCustomFieldStore = create<CustomFieldState>((set) => ({
   customFields: [],

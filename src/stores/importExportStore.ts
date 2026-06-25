@@ -68,11 +68,9 @@ export const useImportExportStore = create<ImportExportState>((set) => ({
 
       set({ isExporting: false });
     } catch (error: any) {
-      set({ 
-        error: error.response?.data?.error || 'Failed to export expenses',
-        isExporting: false 
-      });
-      throw error;
+      const errorMessage = 'Failed to export expenses';
+      set({ error: errorMessage, isExporting: false });
+      throw new Error(errorMessage);
     }
   },
 
@@ -94,11 +92,9 @@ export const useImportExportStore = create<ImportExportState>((set) => ({
 
       set({ isExporting: false });
     } catch (error: any) {
-      set({ 
-        error: error.response?.data?.error || 'Failed to create backup',
-        isExporting: false 
-      });
-      throw error;
+      const errorMessage = 'Failed to create backup';
+      set({ error: errorMessage, isExporting: false });
+      throw new Error(errorMessage);
     }
   },
 
@@ -141,6 +137,6 @@ export const useImportExportStore = create<ImportExportState>((set) => ({
   },
 
   clearImportResult: () => {
-    set({ importResult: null, error: null });
+    set({ importResult: null });
   },
 }));

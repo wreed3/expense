@@ -1,6 +1,28 @@
 import { create } from 'zustand';
-import { CurrencyState, Currency } from '../types';
 import api from '../utils/api';
+
+interface Currency {
+  id: number;
+  code: string;
+  name: string;
+  symbol: string;
+  exchange_rate: number;
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+interface CurrencyState {
+  currencies: Currency[];
+  defaultCurrency: Currency | null;
+  isLoading: boolean;
+  error: string | null;
+  
+  fetchCurrencies: () => Promise<void>;
+  updateExchangeRate: (code: string, rate: number) => Promise<void>;
+  setDefaultCurrency: (code: string) => Promise<void>;
+  convertAmount: (amount: number, from: string, to: string) => Promise<number>;
+}
 
 export const useCurrencyStore = create<CurrencyState>((set, get) => ({
   currencies: [],
