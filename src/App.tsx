@@ -49,9 +49,7 @@ function App() {
             path="/expenses"
             element={
               <PrivateRoute>
-                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-                  <ExpenseList />
-                </div>
+                <ExpenseList />
               </PrivateRoute>
             }
           />
@@ -60,9 +58,7 @@ function App() {
             path="/categories"
             element={
               <PrivateRoute>
-                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-                  <CategoryManager />
-                </div>
+                <CategoryManager />
               </PrivateRoute>
             }
           />
@@ -71,9 +67,7 @@ function App() {
             path="/budgets"
             element={
               <PrivateRoute>
-                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-                  <BudgetManager />
-                </div>
+                <BudgetManager />
               </PrivateRoute>
             }
           />
@@ -88,19 +82,19 @@ function App() {
           />
           
           <Route
-            path="/data-management"
+            path="/settings"
             element={
               <PrivateRoute>
-                <DataManagement />
+                <Settings />
               </PrivateRoute>
             }
           />
           
           <Route
-            path="/settings"
+            path="/data-management"
             element={
               <PrivateRoute>
-                <Settings />
+                <DataManagement />
               </PrivateRoute>
             }
           />
