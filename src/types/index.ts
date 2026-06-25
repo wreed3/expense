@@ -101,40 +101,9 @@ export interface PaginatedExpenses {
     total: number;
     limit: number;
     offset: number;
-    has_more: boolean;
+    current_page: number;
+    total_pages: number;
   };
-}
-
-export interface SpendingSummary {
-  total: number;
-  by_category: Array<{
-    category_id: number;
-    category_name: string;
-    category_color: string;
-    total: number;
-    count: number;
-  }>;
-  by_month: Array<{
-    month: string;
-    total: number;
-    count: number;
-  }>;
-  by_tag?: Array<{
-    tag_id: number;
-    tag_name: string;
-    total: number;
-    count: number;
-  }>;
-}
-
-export interface AuthState {
-  user: User | null;
-  token: string | null;
-  isAuthenticated: boolean;
-  login: (email: string, password: string) => Promise<void>;
-  register: (email: string, password: string, name: string) => Promise<void>;
-  logout: () => void;
-  checkAuth: () => Promise<void>;
 }
 
 export interface ExpenseState {
@@ -150,7 +119,6 @@ export interface ExpenseState {
   bulkDelete: (ids: number[]) => Promise<void>;
   bulkTag: (expenseIds: number[], tagIds: number[]) => Promise<void>;
   setFilters: (filters: ExpenseFilters) => void;
-  clearFilters: () => void;
 }
 
 export interface CategoryState {
@@ -202,4 +170,16 @@ export interface CustomFieldState {
   addCustomField: (field: Partial<CustomField>) => Promise<void>;
   updateCustomField: (id: number, field: Partial<CustomField>) => Promise<void>;
   deleteCustomField: (id: number) => Promise<void>;
+}
+
+export interface AuthState {
+  user: User | null;
+  token: string | null;
+  isAuthenticated: boolean;
+  isLoading: boolean;
+  error: string | null;
+  login: (email: string, password: string) => Promise<void>;
+  register: (email: string, password: string, name: string) => Promise<void>;
+  logout: () => void;
+  checkAuth: () => Promise<void>;
 }

@@ -11,13 +11,23 @@ A comprehensive full-stack expense tracking application built with React, TypeSc
 - **Date Range Filtering**: View expenses by custom date ranges
 - **Search & Filter**: Quickly find expenses with powerful search capabilities
 
-### Phase 3 Features (NEW! 🎉)
+### Phase 3 Features
 - **Multi-Currency Support**: Track expenses in 9 major currencies with automatic conversion
 - **Tags System**: Organize expenses with color-coded tags and bulk tagging
 - **Custom Fields**: Add metadata to expenses with 5 field types (text, number, date, boolean, select)
 - **Advanced Search**: Filter by date range, amount, category, tags, currency, and more
 - **Bulk Operations**: Delete or tag multiple expenses at once
-- **Enhanced UI**: Improved expense list with pagination and visual indicators
+
+### Phase 4 Features (NEW! 🎉)
+- **Advanced Analytics**: Spending trends, forecasting, category comparison, and budget performance
+- **Smart Insights**: AI-powered recommendations and spending pattern detection
+- **Spending Heatmap**: Visual calendar showing daily spending intensity
+- **Month-over-Month Comparison**: Track changes in spending habits
+- **Data Import**: Import expenses from CSV/Excel files with validation
+- **Excel Export**: Export expenses with professional formatting
+- **Full Backup/Restore**: Complete data backup and restore functionality
+- **Mobile Optimized**: Responsive design with mobile-first approach
+- **Grid/List Views**: Toggle between different viewing modes
 
 ### Advanced Features
 - **User Authentication**: Secure JWT-based authentication system
@@ -26,7 +36,6 @@ A comprehensive full-stack expense tracking application built with React, TypeSc
 - **Export Capabilities**: Export data to CSV and generate PDF reports
 - **Recurring Expenses**: Set up automatic recurring transactions
 - **Budget Alerts**: Get notified when approaching budget limits
-- **Spending Analytics**: Detailed insights and trend analysis
 - **Responsive Design**: Works seamlessly on desktop and mobile devices
 
 ### Technical Features
@@ -109,45 +118,31 @@ expense/
 ├── server/                 # Backend Express server
 │   ├── index.ts           # Server entry point
 │   ├── migrations/        # Database migrations and seeds
-│   │   ├── 001_initial_schema.ts
-│   │   ├── 002_add_recurring_expenses.ts
-│   │   ├── 003_add_budgets.ts
-│   │   ├── 004_phase3_features.ts    # NEW: Phase 3 features
-│   │   └── index.ts       # Migration runner
 │   ├── routes/            # API route handlers
-│   │   ├── auth.ts
-│   │   ├── expenses.ts
-│   │   ├── categories.ts
-│   │   ├── budgets.ts
-│   │   ├── analytics.ts
-│   │   ├── export.ts
-│   │   ├── currencies.ts  # NEW: Currency management
-│   │   ├── tags.ts        # NEW: Tag management
-│   │   └── custom-fields.ts  # NEW: Custom fields
+│   │   ├── analytics-advanced.ts  # Advanced analytics endpoints
+│   │   ├── import-export.ts       # Import/export functionality
+│   │   └── ...
 │   ├── middleware/        # Express middleware
 │   └── utils/             # Utility functions
 ├── src/                   # Frontend React application
 │   ├── components/        # React components
-│   │   ├── CurrencySelector.tsx       # NEW
-│   │   ├── CurrencySettings.tsx       # NEW
-│   │   ├── TagManager.tsx             # NEW
-│   │   ├── TagSelector.tsx            # NEW
-│   │   ├── CustomFieldManager.tsx     # NEW
-│   │   ├── CustomFieldInput.tsx       # NEW
-│   │   ├── AdvancedSearch.tsx         # NEW
-│   │   └── Settings.tsx               # NEW
+│   │   ├── AdvancedAnalytics.tsx  # Advanced analytics UI
+│   │   ├── ImportExport.tsx       # Import/export UI
+│   │   ├── DataManagement.tsx     # Data management page
+│   │   └── ...
 │   ├── hooks/            # Custom React hooks
 │   ├── stores/           # Zustand state management
-│   │   ├── currencyStore.ts   # NEW
-│   │   ├── tagStore.ts        # NEW
-│   │   └── customFieldStore.ts  # NEW
+│   │   ├── analyticsStore.ts      # Analytics state
+│   │   ├── importExportStore.ts   # Import/export state
+│   │   └── ...
 │   ├── types/            # TypeScript type definitions
 │   └── utils/            # Frontend utilities
 ├── public/               # Static assets
 ├── uploads/              # User-uploaded files (receipts)
+├── PHASE3_FEATURES.md    # Phase 3 documentation
+├── PHASE4_FEATURES.md    # Phase 4 documentation
 ├── .env.example          # Environment variables template
 ├── package.json          # Project dependencies
-├── PHASE3_FEATURES.md    # NEW: Phase 3 documentation
 ├── tsconfig.json         # TypeScript configuration
 └── vite.config.ts        # Vite build configuration
 ```
@@ -194,47 +189,7 @@ DB_PASSWORD=your_password
 | `npm run build` | Build the application for production |
 | `npm run preview` | Preview the production build locally |
 | `npm run migrate` | Run database migrations |
-| `npm run migrate:down` | Rollback last migration |
 | `npm run seed` | Seed the database with sample data |
-
-## 🆕 Phase 3 Features
-
-### Multi-Currency Support
-Track expenses in multiple currencies with automatic conversion:
-- Support for USD, EUR, GBP, JPY, CAD, AUD, CHF, CNY, INR
-- Configurable exchange rates
-- Set your preferred default currency
-- View amounts in original or converted currency
-
-### Tags System
-Organize expenses with custom tags:
-- Create unlimited tags with custom colors
-- Tag multiple expenses at once (bulk tagging)
-- Filter expenses by tags
-- See tag usage statistics
-
-### Custom Fields
-Add custom metadata to expenses:
-- 5 field types: text, number, date, boolean, select
-- Mark fields as required or optional
-- Create dropdown options for select fields
-- Examples: Project name, Client, Payment method, Reimbursable status
-
-### Advanced Search
-Powerful filtering capabilities:
-- Search by description text
-- Filter by date range and amount range
-- Filter by category, currency, and tags
-- Sort by multiple criteria
-- Pagination support
-
-### Bulk Operations
-Manage multiple expenses efficiently:
-- Bulk delete expenses
-- Bulk tag expenses
-- Select all or individual expenses
-
-For detailed documentation, see [PHASE3_FEATURES.md](./PHASE3_FEATURES.md)
 
 ## 🔐 Authentication
 
@@ -253,13 +208,11 @@ The application uses JWT (JSON Web Tokens) for authentication:
 - `GET /api/auth/me` - Get current user
 
 ### Expenses
-- `GET /api/expenses` - Get all expenses (with advanced filters)
+- `GET /api/expenses` - Get all expenses (with filters)
 - `POST /api/expenses` - Create new expense
 - `GET /api/expenses/:id` - Get expense by ID
 - `PUT /api/expenses/:id` - Update expense
 - `DELETE /api/expenses/:id` - Delete expense
-- `POST /api/expenses/bulk/delete` - Bulk delete expenses
-- `POST /api/expenses/bulk/tag` - Bulk tag expenses
 
 ### Categories
 - `GET /api/categories` - Get all categories
@@ -273,34 +226,21 @@ The application uses JWT (JSON Web Tokens) for authentication:
 - `PUT /api/budgets/:id` - Update budget
 - `DELETE /api/budgets/:id` - Delete budget
 
-### Currencies (NEW)
-- `GET /api/currencies` - Get all currencies
-- `GET /api/currencies/default` - Get default currency
-- `PUT /api/currencies/:code` - Update exchange rate
-- `POST /api/currencies/:code/set-default` - Set default currency
-- `POST /api/currencies/convert` - Convert between currencies
+### Advanced Analytics (Phase 4)
+- `GET /api/analytics-advanced/trends` - Spending trends and forecast
+- `GET /api/analytics-advanced/category-comparison` - Category comparison
+- `GET /api/analytics-advanced/budget-performance` - Budget performance
+- `GET /api/analytics-advanced/heatmap` - Spending heatmap
+- `GET /api/analytics-advanced/top-expenses` - Top expenses
+- `GET /api/analytics-advanced/month-comparison` - Month comparison
+- `GET /api/analytics-advanced/insights` - Smart insights
 
-### Tags (NEW)
-- `GET /api/tags` - Get all tags
-- `POST /api/tags` - Create new tag
-- `PUT /api/tags/:id` - Update tag
-- `DELETE /api/tags/:id` - Delete tag
-- `GET /api/tags/:id/expenses` - Get expenses with tag
-
-### Custom Fields (NEW)
-- `GET /api/custom-fields` - Get all custom fields
-- `POST /api/custom-fields` - Create new custom field
-- `PUT /api/custom-fields/:id` - Update custom field
-- `DELETE /api/custom-fields/:id` - Delete custom field
-
-### Analytics
-- `GET /api/analytics/summary` - Get spending summary
-- `GET /api/analytics/trends` - Get spending trends
-- `GET /api/analytics/categories` - Get category breakdown
-
-### Export
-- `GET /api/export/csv` - Export expenses to CSV
-- `GET /api/export/pdf` - Generate PDF report
+### Import/Export (Phase 4)
+- `POST /api/import-export/import` - Import from CSV/Excel
+- `GET /api/import-export/export/excel` - Export to Excel
+- `GET /api/import-export/backup` - Create backup
+- `POST /api/import-export/restore` - Restore backup
+- `GET /api/import-export/template` - Download template
 
 ## 🎨 Technology Stack
 
@@ -312,7 +252,7 @@ The application uses JWT (JSON Web Tokens) for authentication:
 - **Recharts** - Data visualization
 - **React Hot Toast** - Notifications
 - **date-fns** - Date manipulation
-- **jsPDF** - PDF generation
+- **Tailwind CSS** - Styling
 
 ### Backend
 - **Express** - Web framework
@@ -326,6 +266,8 @@ The application uses JWT (JSON Web Tokens) for authentication:
 - **Winston** - Logging
 - **Helmet** - Security headers
 - **express-rate-limit** - Rate limiting
+- **xlsx** - Excel file handling
+- **csv-parse** - CSV parsing
 
 ## 🛡️ Security Features
 
@@ -423,14 +365,17 @@ rm -rf dist .vite
 npm run build
 ```
 
-**Migration errors**
+**Import fails**
 ```bash
-# Check migration status
-npm run migrate
-
-# Rollback if needed
-npm run migrate:down
+# Download template and match format exactly
+# Check date format is YYYY-MM-DD
+# Ensure amounts are numbers without symbols
 ```
+
+## 📚 Documentation
+
+- **[Phase 3 Features](PHASE3_FEATURES.md)** - Multi-currency, tags, custom fields
+- **[Phase 4 Features](PHASE4_FEATURES.md)** - Advanced analytics and data management
 
 ## 📄 License
 
@@ -448,15 +393,5 @@ For questions or support, please open an issue on the GitHub repository.
 
 **Version**: 2.0.0  
 **Repository**: [wreed3/expense](https://github.com/wreed3/expense)  
-**Branch**: master
-
-## 🎉 What's New in Version 2.0
-
-- ✅ Multi-currency support with 9 major currencies
-- ✅ Tag system for flexible expense organization
-- ✅ Custom fields for additional metadata
-- ✅ Advanced search and filtering
-- ✅ Bulk operations for efficiency
-- ✅ Enhanced UI with better visual indicators
-- ✅ Improved performance with database indexes
-- ✅ Comprehensive settings management
+**Branch**: master  
+**Latest Release**: Phase 4 - Advanced Analytics & Data Management
