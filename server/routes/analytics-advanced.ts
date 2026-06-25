@@ -1,6 +1,6 @@
 import express from 'express';
-import { authenticateToken } from '../middleware/auth';
-import { getDb } from '../index';
+import { authenticateToken } from '../middleware/auth.js';
+import { getDatabase } from '../index.js';
 import { startOfMonth, endOfMonth, subMonths, format, eachDayOfInterval, startOfDay, endOfDay } from 'date-fns';
 
 const router = express.Router();
@@ -9,7 +9,7 @@ const router = express.Router();
 router.get('/trends', authenticateToken, (req, res) => {
   try {
     const { months = 12 } = req.query;
-    const db = getDb();
+    const db = getDatabase();
     
     const monthsBack = parseInt(months as string);
     const startDate = subMonths(new Date(), monthsBack);
@@ -32,6 +32,16 @@ router.get('/trends', authenticateToken, (req, res) => {
     // Calculate trend (simple linear regression)
     const values = (monthlyData as any[]).map(d => d.total);
     const n = values.length;
+    
+    if (n === 0) {
+      return res.json({
+        historical: [],
+        forecast: [],
+        trend: 'stable',
+        trendPercentage: '0.00',
+      });
+    }
+
     const xSum = (n * (n + 1)) / 2;
     const ySum = values.reduce((a, b) => a + b, 0);
     const xySum = values.reduce((sum, y, i) => sum + (i + 1) * y, 0);
@@ -54,7 +64,7 @@ router.get('/trends', authenticateToken, (req, res) => {
       historical: monthlyData,
       forecast,
       trend: slope > 0 ? 'increasing' : slope < 0 ? 'decreasing' : 'stable',
-      trendPercentage: n > 1 ? ((slope / (ySum / n)) * 100).toFixed(2) : 0,
+      trendPercentage: n > 1 ? ((slope / (ySum / n)) * 100).toFixed(2) : '0.00',
     });
   } catch (error) {
     console.error('Error fetching spending trends:', error);
@@ -66,7 +76,7 @@ router.get('/trends', authenticateToken, (req, res) => {
 router.get('/category-comparison', authenticateToken, (req, res) => {
   try {
     const { start_date, end_date, top = 5 } = req.query;
-    const db = getDb();
+    const db = getDatabase();
     
     const topN = parseInt(top as string);
     
@@ -118,7 +128,7 @@ router.get('/category-comparison', authenticateToken, (req, res) => {
 // Budget performance analysis
 router.get('/budget-performance', authenticateToken, (req, res) => {
   try {
-    const db = getDb();
+    const db = getDatabase();
     const now = new Date();
     const startDate = startOfMonth(now);
     const endDate = endOfMonth(now);
@@ -161,11 +171,11 @@ router.get('/budget-performance', authenticateToken, (req, res) => {
   }
 });
 
-// Spending heatmap (calendar view)
+// Spending heatmap
 router.get('/heatmap', authenticateToken, (req, res) => {
   try {
     const { start_date, end_date } = req.query;
-    const db = getDb();
+    const db = getDatabase();
     
     const dailySpending = db.prepare(`
       SELECT 
@@ -178,36 +188,18 @@ router.get('/heatmap', authenticateToken, (req, res) => {
       ORDER BY date ASC
     `).all(req.user!.id, start_date, end_date);
 
-    // Fill in missing dates with zero
-    const start = new Date(start_date as string);
-    const end = new Date(end_date as string);
-    const allDays = eachDayOfInterval({ start, end });
-    
-    const spendingMap = new Map((dailySpending as any[]).map(d => [d.date, d]));
-    
-    const heatmapData = allDays.map(day => {
-      const dateStr = format(day, 'yyyy-MM-dd');
-      const data = spendingMap.get(dateStr);
-      return {
-        date: dateStr,
-        total: data?.total || 0,
-        count: data?.count || 0,
-        day_of_week: format(day, 'EEEE'),
-      };
-    });
-
-    res.json(heatmapData);
+    res.json(dailySpending);
   } catch (error) {
     console.error('Error fetching heatmap data:', error);
     res.status(500).json({ error: 'Failed to fetch heatmap data' });
   }
 });
 
-// Top expenses and categories
+// Top expenses
 router.get('/top-expenses', authenticateToken, (req, res) => {
   try {
     const { start_date, end_date, limit = 10 } = req.query;
-    const db = getDb();
+    const db = getDatabase();
     
     const topExpenses = db.prepare(`
       SELECT 
@@ -231,179 +223,173 @@ router.get('/top-expenses', authenticateToken, (req, res) => {
 // Month-over-month comparison
 router.get('/month-comparison', authenticateToken, (req, res) => {
   try {
-    const db = getDb();
+    const db = getDatabase();
     const now = new Date();
+    const currentStart = startOfMonth(now);
+    const currentEnd = endOfMonth(now);
+    const previousStart = startOfMonth(subMonths(now, 1));
+    const previousEnd = endOfMonth(subMonths(now, 1));
     
-    const currentMonth = {
-      start: startOfMonth(now),
-      end: endOfMonth(now),
-    };
-    
-    const lastMonth = {
-      start: startOfMonth(subMonths(now, 1)),
-      end: endOfMonth(subMonths(now, 1)),
-    };
-    
-    const getCurrentData = (start: Date, end: Date) => {
-      return db.prepare(`
-        SELECT 
-          COUNT(*) as expense_count,
-          SUM(amount) as total_spent,
-          AVG(amount) as avg_expense,
-          MAX(amount) as max_expense,
-          MIN(amount) as min_expense
-        FROM expenses
-        WHERE user_id = ? AND date >= ? AND date <= ?
-      `).get(req.user!.id, start.toISOString(), end.toISOString());
-    };
-    
-    const current = getCurrentData(currentMonth.start, currentMonth.end) as any;
-    const previous = getCurrentData(lastMonth.start, lastMonth.end) as any;
-    
+    const currentMonth = db.prepare(`
+      SELECT 
+        COUNT(*) as expense_count,
+        SUM(amount) as total_spent,
+        AVG(amount) as avg_expense
+      FROM expenses
+      WHERE user_id = ? AND date >= ? AND date <= ?
+    `).get(req.user!.id, currentStart.toISOString(), currentEnd.toISOString());
+
+    const previousMonth = db.prepare(`
+      SELECT 
+        COUNT(*) as expense_count,
+        SUM(amount) as total_spent,
+        AVG(amount) as avg_expense
+      FROM expenses
+      WHERE user_id = ? AND date >= ? AND date <= ?
+    `).get(req.user!.id, previousStart.toISOString(), previousEnd.toISOString());
+
     const calculateChange = (current: number, previous: number) => {
-      if (!previous) return 0;
-      return ((current - previous) / previous * 100).toFixed(2);
+      if (previous === 0) return current > 0 ? '+100.00' : '0.00';
+      const change = ((current - previous) / previous) * 100;
+      return (change > 0 ? '+' : '') + change.toFixed(2);
     };
-    
-    const comparison = {
-      current_month: {
-        ...current,
-        month: format(currentMonth.start, 'MMMM yyyy'),
-      },
-      previous_month: {
-        ...previous,
-        month: format(lastMonth.start, 'MMMM yyyy'),
-      },
+
+    res.json({
+      current_month: currentMonth,
+      previous_month: previousMonth,
       changes: {
-        expense_count: calculateChange(current.expense_count, previous.expense_count),
-        total_spent: calculateChange(current.total_spent, previous.total_spent),
-        avg_expense: calculateChange(current.avg_expense, previous.avg_expense),
+        expense_count: calculateChange(
+          (currentMonth as any).expense_count,
+          (previousMonth as any).expense_count
+        ),
+        total_spent: calculateChange(
+          (currentMonth as any).total_spent || 0,
+          (previousMonth as any).total_spent || 0
+        ),
+        avg_expense: calculateChange(
+          (currentMonth as any).avg_expense || 0,
+          (previousMonth as any).avg_expense || 0
+        ),
       },
-    };
-    
-    res.json(comparison);
+    });
   } catch (error) {
     console.error('Error fetching month comparison:', error);
     res.status(500).json({ error: 'Failed to fetch month comparison' });
   }
 });
 
-// Smart insights and recommendations
+// Smart insights
 router.get('/insights', authenticateToken, (req, res) => {
   try {
-    const db = getDb();
-    const insights: any[] = [];
-    
-    // Check for unusual spending
-    const avgSpending = db.prepare(`
-      SELECT AVG(amount) as avg_amount
-      FROM expenses
-      WHERE user_id = ? AND date >= date('now', '-30 days')
-    `).get(req.user!.id) as any;
-    
-    const recentHighExpenses = db.prepare(`
-      SELECT COUNT(*) as count
-      FROM expenses
-      WHERE user_id = ? 
-        AND date >= date('now', '-7 days')
-        AND amount > ?
-    `).get(req.user!.id, avgSpending.avg_amount * 2) as any;
-    
-    if (recentHighExpenses.count > 0) {
+    const db = getDatabase();
+    const insights = [];
+    const now = new Date();
+    const monthStart = startOfMonth(now);
+    const monthEnd = endOfMonth(now);
+
+    // Check for unusual high spending
+    const avgExpense = db.prepare(`
+      SELECT AVG(amount) as avg FROM expenses WHERE user_id = ?
+    `).get(req.user!.id);
+
+    const highExpenses = db.prepare(`
+      SELECT COUNT(*) as count FROM expenses 
+      WHERE user_id = ? AND amount > ? * 2 AND date >= ?
+    `).get(req.user!.id, (avgExpense as any).avg, monthStart.toISOString());
+
+    if ((highExpenses as any).count > 0) {
       insights.push({
         type: 'warning',
         title: 'Unusual High Spending',
-        message: `You have ${recentHighExpenses.count} expenses in the last week that are significantly higher than your average.`,
+        message: `You have ${(highExpenses as any).count} expense(s) this month that are significantly higher than your average.`,
         icon: '⚠️',
       });
     }
-    
-    // Check budget performance
+
+    // Check budget status
     const overBudget = db.prepare(`
-      SELECT COUNT(*) as count
-      FROM budgets b
-      LEFT JOIN (
+      SELECT COUNT(*) as count FROM budgets b
+      JOIN (
         SELECT category_id, SUM(amount) as spent
         FROM expenses
-        WHERE user_id = ? AND date >= date('now', 'start of month')
+        WHERE user_id = ? AND date >= ? AND date <= ?
         GROUP BY category_id
       ) e ON b.category_id = e.category_id
       WHERE b.user_id = ? AND e.spent > b.amount
-    `).get(req.user!.id, req.user!.id) as any;
-    
-    if (overBudget.count > 0) {
+    `).get(req.user!.id, monthStart.toISOString(), monthEnd.toISOString(), req.user!.id);
+
+    if ((overBudget as any).count > 0) {
       insights.push({
         type: 'alert',
         title: 'Budget Exceeded',
-        message: `You've exceeded ${overBudget.count} budget${overBudget.count > 1 ? 's' : ''} this month.`,
+        message: `You have exceeded ${(overBudget as any).count} budget(s) this month.`,
         icon: '🚨',
       });
     }
-    
-    // Check for recurring patterns
-    const frequentCategories = db.prepare(`
+
+    // Most frequent category
+    const topCategory = db.prepare(`
       SELECT c.name, COUNT(*) as count
       FROM expenses e
       JOIN categories c ON e.category_id = c.id
-      WHERE e.user_id = ? AND e.date >= date('now', '-30 days')
+      WHERE e.user_id = ? AND e.date >= ?
       GROUP BY c.id
       ORDER BY count DESC
       LIMIT 1
-    `).get(req.user!.id) as any;
-    
-    if (frequentCategories) {
+    `).get(req.user!.id, monthStart.toISOString());
+
+    if (topCategory) {
       insights.push({
         type: 'info',
         title: 'Most Frequent Category',
-        message: `You've made ${frequentCategories.count} ${frequentCategories.name} expenses in the last 30 days.`,
+        message: `You've spent most frequently on ${(topCategory as any).name} with ${(topCategory as any).count} transactions this month.`,
         icon: '📊',
       });
     }
-    
-    // Check spending trend
-    const trendData = db.prepare(`
-      SELECT 
-        strftime('%Y-%m', date) as month,
-        SUM(amount) as total
-      FROM expenses
-      WHERE user_id = ? AND date >= date('now', '-90 days')
-      GROUP BY strftime('%Y-%m', date)
-      ORDER BY month ASC
-    `).all(req.user!.id) as any[];
-    
-    if (trendData.length >= 2) {
-      const latest = trendData[trendData.length - 1].total;
-      const previous = trendData[trendData.length - 2].total;
-      const change = ((latest - previous) / previous * 100).toFixed(0);
-      
-      if (Math.abs(parseFloat(change)) > 10) {
+
+    // Spending trend
+    const thisMonth = db.prepare(`
+      SELECT SUM(amount) as total FROM expenses 
+      WHERE user_id = ? AND date >= ? AND date <= ?
+    `).get(req.user!.id, monthStart.toISOString(), monthEnd.toISOString());
+
+    const lastMonth = db.prepare(`
+      SELECT SUM(amount) as total FROM expenses 
+      WHERE user_id = ? AND date >= ? AND date <= ?
+    `).get(
+      req.user!.id,
+      startOfMonth(subMonths(now, 1)).toISOString(),
+      endOfMonth(subMonths(now, 1)).toISOString()
+    );
+
+    if ((thisMonth as any).total && (lastMonth as any).total) {
+      const change = (((thisMonth as any).total - (lastMonth as any).total) / (lastMonth as any).total) * 100;
+      if (Math.abs(change) > 20) {
         insights.push({
-          type: parseFloat(change) > 0 ? 'warning' : 'success',
+          type: change > 0 ? 'warning' : 'success',
           title: 'Spending Trend',
-          message: `Your spending is ${parseFloat(change) > 0 ? 'up' : 'down'} ${Math.abs(parseFloat(change))}% compared to last month.`,
-          icon: parseFloat(change) > 0 ? '📈' : '📉',
+          message: `Your spending has ${change > 0 ? 'increased' : 'decreased'} by ${Math.abs(change).toFixed(1)}% compared to last month.`,
+          icon: change > 0 ? '📈' : '📉',
         });
       }
     }
-    
-    // Savings opportunity
+
+    // Small expenses add up
     const smallExpenses = db.prepare(`
       SELECT COUNT(*) as count, SUM(amount) as total
       FROM expenses
-      WHERE user_id = ? 
-        AND date >= date('now', '-30 days')
-        AND amount < 10
-    `).get(req.user!.id) as any;
-    
-    if (smallExpenses.count > 20) {
+      WHERE user_id = ? AND amount < 10 AND date >= ?
+    `).get(req.user!.id, monthStart.toISOString());
+
+    if ((smallExpenses as any).count > 10) {
       insights.push({
         type: 'tip',
         title: 'Small Expenses Add Up',
-        message: `You've made ${smallExpenses.count} small purchases (under $10) totaling $${smallExpenses.total.toFixed(2)} this month.`,
+        message: `You have ${(smallExpenses as any).count} small expenses totaling $${((smallExpenses as any).total).toFixed(2)} this month.`,
         icon: '💡',
       });
     }
-    
+
     res.json(insights);
   } catch (error) {
     console.error('Error generating insights:', error);

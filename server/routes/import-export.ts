@@ -3,11 +3,10 @@ import multer from 'multer';
 import { parse } from 'csv-parse/sync';
 import * as XLSX from 'xlsx';
 import { z } from 'zod';
-import { authenticateToken } from '../middleware/auth';
-import { getDb } from '../index';
+import { authenticateToken } from '../middleware/auth.js';
+import { getDatabase } from '../index.js';
 import { format } from 'date-fns';
 import path from 'path';
-import fs from 'fs';
 
 const router = express.Router();
 
@@ -40,7 +39,7 @@ router.post('/import', authenticateToken, upload.single('file'), async (req, res
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
-    const db = getDb();
+    const db = getDatabase();
     let records: any[] = [];
 
     // Parse file based on type
@@ -61,138 +60,111 @@ router.post('/import', authenticateToken, upload.single('file'), async (req, res
 
     // Validate and process records
     const errors: any[] = [];
-    const validRecords: any[] = [];
+    const imported: any[] = [];
     const categoryCache = new Map();
+    const tagCache = new Map();
 
-    records.forEach((record, index) => {
+    for (let i = 0; i < records.length; i++) {
+      const record = records[i];
+      
       try {
-        // Normalize field names (handle variations)
-        const normalized = {
+        // Normalize field names
+        const normalizedRecord = {
           date: record.date || record.Date || record.DATE,
           amount: parseFloat(record.amount || record.Amount || record.AMOUNT),
           description: record.description || record.Description || record.DESCRIPTION,
           category: record.category || record.Category || record.CATEGORY,
-          currency_code: record.currency_code || record.currency || 'USD',
+          currency_code: record.currency_code || record.Currency || 'USD',
           tags: record.tags || record.Tags || '',
         };
 
-        const validated = expenseImportSchema.parse(normalized);
-        validRecords.push({ ...validated, rowNumber: index + 2 });
-      } catch (error) {
-        errors.push({
-          row: index + 2,
-          error: error instanceof z.ZodError ? error.errors : 'Invalid data format',
-          data: record,
-        });
-      }
-    });
+        const validatedData = expenseImportSchema.parse(normalizedRecord);
 
-    // If there are validation errors, return them
-    if (errors.length > 0) {
-      return res.status(400).json({
-        error: 'Validation failed',
-        errors,
-        valid_count: validRecords.length,
-        error_count: errors.length,
-      });
-    }
-
-    // Import valid records
-    const imported: any[] = [];
-    const importErrors: any[] = [];
-
-    db.prepare('BEGIN TRANSACTION').run();
-
-    try {
-      for (const record of validRecords) {
-        try {
-          // Find or create category
-          let category = categoryCache.get(record.category);
+        // Get or create category
+        let categoryId = categoryCache.get(validatedData.category);
+        if (!categoryId) {
+          let category = db.prepare('SELECT id FROM categories WHERE user_id = ? AND name = ?')
+            .get(req.user!.id, validatedData.category);
           
           if (!category) {
-            category = db.prepare('SELECT id FROM categories WHERE user_id = ? AND name = ?')
-              .get(req.user!.id, record.category);
-            
-            if (!category) {
-              const result = db.prepare('INSERT INTO categories (user_id, name, color) VALUES (?, ?, ?)')
-                .run(req.user!.id, record.category, '#3B82F6');
-              category = { id: result.lastInsertRowid };
-            }
-            
-            categoryCache.set(record.category, category);
+            const result = db.prepare('INSERT INTO categories (user_id, name, color) VALUES (?, ?, ?)')
+              .run(req.user!.id, validatedData.category, '#3B82F6');
+            categoryId = result.lastInsertRowid;
+          } else {
+            categoryId = (category as any).id;
           }
+          categoryCache.set(validatedData.category, categoryId);
+        }
 
-          // Insert expense
-          const result = db.prepare(`
-            INSERT INTO expenses (user_id, amount, category_id, description, date, currency_code)
-            VALUES (?, ?, ?, ?, ?, ?)
-          `).run(
-            req.user!.id,
-            record.amount,
-            category.id,
-            record.description,
-            new Date(record.date).toISOString(),
-            record.currency_code
-          );
+        // Insert expense
+        const expenseResult = db.prepare(`
+          INSERT INTO expenses (user_id, amount, category_id, description, date, currency_code)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `).run(
+          req.user!.id,
+          validatedData.amount,
+          categoryId,
+          validatedData.description,
+          validatedData.date,
+          validatedData.currency_code
+        );
 
-          // Handle tags if provided
-          if (record.tags) {
-            const tagNames = record.tags.split(',').map((t: string) => t.trim());
-            
-            for (const tagName of tagNames) {
-              if (!tagName) continue;
-              
+        // Handle tags
+        if (validatedData.tags) {
+          const tagNames = validatedData.tags.split(',').map(t => t.trim()).filter(t => t);
+          
+          for (const tagName of tagNames) {
+            let tagId = tagCache.get(tagName);
+            if (!tagId) {
               let tag = db.prepare('SELECT id FROM tags WHERE user_id = ? AND name = ?')
                 .get(req.user!.id, tagName);
               
               if (!tag) {
-                const tagResult = db.prepare('INSERT INTO tags (user_id, name) VALUES (?, ?)')
+                const result = db.prepare('INSERT INTO tags (user_id, name) VALUES (?, ?)')
                   .run(req.user!.id, tagName);
-                tag = { id: tagResult.lastInsertRowid };
+                tagId = result.lastInsertRowid;
+              } else {
+                tagId = (tag as any).id;
               }
-              
-              db.prepare('INSERT OR IGNORE INTO expense_tags (expense_id, tag_id) VALUES (?, ?)')
-                .run(result.lastInsertRowid, tag.id);
+              tagCache.set(tagName, tagId);
             }
+
+            db.prepare('INSERT OR IGNORE INTO expense_tags (expense_id, tag_id) VALUES (?, ?)')
+              .run(expenseResult.lastInsertRowid, tagId);
           }
-
-          imported.push({
-            row: record.rowNumber,
-            expense_id: result.lastInsertRowid,
-          });
-        } catch (error) {
-          importErrors.push({
-            row: record.rowNumber,
-            error: (error as Error).message,
-            data: record,
-          });
         }
+
+        imported.push({
+          row: i + 1,
+          ...validatedData,
+        });
+      } catch (error) {
+        errors.push({
+          row: i + 1,
+          data: record,
+          error: error instanceof z.ZodError ? error.errors : (error as Error).message,
+        });
       }
-
-      db.prepare('COMMIT').run();
-
-      res.json({
-        success: true,
-        imported_count: imported.length,
-        error_count: importErrors.length,
-        imported,
-        errors: importErrors,
-      });
-    } catch (error) {
-      db.prepare('ROLLBACK').run();
-      throw error;
     }
+
+    res.json({
+      success: true,
+      imported_count: imported.length,
+      error_count: errors.length,
+      imported,
+      errors,
+    });
   } catch (error) {
     console.error('Error importing expenses:', error);
     res.status(500).json({ error: 'Failed to import expenses' });
   }
 });
 
-// Export expenses to Excel
+// Export to Excel
 router.get('/export/excel', authenticateToken, (req, res) => {
   try {
     const { start_date, end_date, category_id } = req.query;
-    const db = getDb();
+    const db = getDatabase();
 
     let query = `
       SELECT 
@@ -226,35 +198,22 @@ router.get('/export/excel', authenticateToken, (req, res) => {
 
     query += ' GROUP BY e.id ORDER BY e.date DESC';
 
-    const expenses = db.prepare(query).all(...params) as any[];
-
-    // Format data for Excel
-    const data = expenses.map(e => ({
-      Date: format(new Date(e.date), 'yyyy-MM-dd'),
-      Amount: e.amount,
-      Description: e.description,
-      Category: e.category,
-      Currency: e.currency_code,
-      Tags: e.tags || '',
-    }));
+    const expenses = db.prepare(query).all(...params);
 
     // Create workbook
-    const worksheet = XLSX.utils.json_to_sheet(data);
     const workbook = XLSX.utils.book_new();
+    
+    // Add expenses sheet
+    const worksheet = XLSX.utils.json_to_sheet(expenses);
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Expenses');
 
     // Add summary sheet
-    const summary = {
-      'Total Expenses': expenses.length,
-      'Total Amount': expenses.reduce((sum, e) => sum + e.amount, 0).toFixed(2),
-      'Date Range': start_date && end_date 
-        ? `${format(new Date(start_date as string), 'MMM dd, yyyy')} - ${format(new Date(end_date as string), 'MMM dd, yyyy')}`
-        : 'All time',
-      'Export Date': format(new Date(), 'MMM dd, yyyy HH:mm:ss'),
-    };
-
-    const summaryData = Object.entries(summary).map(([key, value]) => ({ Field: key, Value: value }));
-    const summarySheet = XLSX.utils.json_to_sheet(summaryData);
+    const summary = [
+      { Metric: 'Total Expenses', Value: expenses.length },
+      { Metric: 'Total Amount', Value: (expenses as any[]).reduce((sum, e) => sum + e.amount, 0) },
+      { Metric: 'Date Range', Value: `${start_date || 'All'} to ${end_date || 'All'}` },
+    ];
+    const summarySheet = XLSX.utils.json_to_sheet(summary);
     XLSX.utils.book_append_sheet(workbook, summarySheet, 'Summary');
 
     // Generate buffer
@@ -265,37 +224,35 @@ router.get('/export/excel', authenticateToken, (req, res) => {
     res.send(buffer);
   } catch (error) {
     console.error('Error exporting to Excel:', error);
-    res.status(500).json({ error: 'Failed to export to Excel' });
+    res.status(500).json({ error: 'Failed to export expenses' });
   }
 });
 
 // Full backup
 router.get('/backup', authenticateToken, (req, res) => {
   try {
-    const db = getDb();
+    const db = getDatabase();
 
     const backup = {
       version: '2.0.0',
       exported_at: new Date().toISOString(),
-      user: db.prepare('SELECT id, email, name FROM users WHERE id = ?').get(req.user!.id),
-      categories: db.prepare('SELECT * FROM categories WHERE user_id = ?').all(req.user!.id),
-      tags: db.prepare('SELECT * FROM tags WHERE user_id = ?').all(req.user!.id),
-      custom_fields: db.prepare('SELECT * FROM custom_fields WHERE user_id = ?').all(req.user!.id),
-      budgets: db.prepare('SELECT * FROM budgets WHERE user_id = ?').all(req.user!.id),
-      expenses: db.prepare(`
-        SELECT e.*, GROUP_CONCAT(DISTINCT t.id) as tag_ids
-        FROM expenses e
-        LEFT JOIN expense_tags et ON e.id = et.expense_id
-        LEFT JOIN tags t ON et.tag_id = t.id
-        WHERE e.user_id = ?
-        GROUP BY e.id
-      `).all(req.user!.id),
-      expense_custom_fields: db.prepare(`
-        SELECT ecf.*
-        FROM expense_custom_fields ecf
-        JOIN expenses e ON ecf.expense_id = e.id
-        WHERE e.user_id = ?
-      `).all(req.user!.id),
+      data: {
+        expenses: db.prepare('SELECT * FROM expenses WHERE user_id = ?').all(req.user!.id),
+        categories: db.prepare('SELECT * FROM categories WHERE user_id = ?').all(req.user!.id),
+        budgets: db.prepare('SELECT * FROM budgets WHERE user_id = ?').all(req.user!.id),
+        tags: db.prepare('SELECT * FROM tags WHERE user_id = ?').all(req.user!.id),
+        custom_fields: db.prepare('SELECT * FROM custom_fields WHERE user_id = ?').all(req.user!.id),
+        expense_tags: db.prepare(`
+          SELECT et.* FROM expense_tags et
+          JOIN expenses e ON et.expense_id = e.id
+          WHERE e.user_id = ?
+        `).all(req.user!.id),
+        expense_custom_fields: db.prepare(`
+          SELECT ecf.* FROM expense_custom_fields ecf
+          JOIN expenses e ON ecf.expense_id = e.id
+          WHERE e.user_id = ?
+        `).all(req.user!.id),
+      },
     };
 
     res.setHeader('Content-Type', 'application/json');
@@ -311,118 +268,106 @@ router.get('/backup', authenticateToken, (req, res) => {
 router.post('/restore', authenticateToken, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
-      return res.status(400).json({ error: 'No backup file uploaded' });
+      return res.status(400).json({ error: 'No file uploaded' });
     }
 
     const backup = JSON.parse(req.file.buffer.toString());
-    const db = getDb();
+    const db = getDatabase();
 
-    // Validate backup format
-    if (!backup.version || !backup.expenses) {
-      return res.status(400).json({ error: 'Invalid backup file format' });
+    // Validate backup structure
+    if (!backup.data || !backup.version) {
+      return res.status(400).json({ error: 'Invalid backup file' });
     }
 
+    // Start transaction
     db.prepare('BEGIN TRANSACTION').run();
 
     try {
-      const categoryMap = new Map();
-      const tagMap = new Map();
-      const customFieldMap = new Map();
-
-      // Restore categories
-      for (const cat of backup.categories) {
+      // Restore categories first
+      const categoryIdMap = new Map();
+      for (const category of backup.data.categories) {
         const result = db.prepare(`
           INSERT INTO categories (user_id, name, color, icon)
           VALUES (?, ?, ?, ?)
-        `).run(req.user!.id, cat.name, cat.color, cat.icon);
-        categoryMap.set(cat.id, result.lastInsertRowid);
+        `).run(req.user!.id, category.name, category.color, category.icon);
+        categoryIdMap.set(category.id, result.lastInsertRowid);
       }
 
       // Restore tags
-      for (const tag of backup.tags) {
+      const tagIdMap = new Map();
+      for (const tag of backup.data.tags) {
         const result = db.prepare(`
           INSERT INTO tags (user_id, name, color)
           VALUES (?, ?, ?)
         `).run(req.user!.id, tag.name, tag.color);
-        tagMap.set(tag.id, result.lastInsertRowid);
+        tagIdMap.set(tag.id, result.lastInsertRowid);
       }
 
       // Restore custom fields
-      for (const field of backup.custom_fields || []) {
+      const customFieldIdMap = new Map();
+      for (const field of backup.data.custom_fields) {
         const result = db.prepare(`
           INSERT INTO custom_fields (user_id, name, field_type, options, is_required)
           VALUES (?, ?, ?, ?, ?)
         `).run(req.user!.id, field.name, field.field_type, field.options, field.is_required);
-        customFieldMap.set(field.id, result.lastInsertRowid);
-      }
-
-      // Restore budgets
-      for (const budget of backup.budgets) {
-        const newCategoryId = categoryMap.get(budget.category_id);
-        if (newCategoryId) {
-          db.prepare(`
-            INSERT INTO budgets (user_id, category_id, amount, period, start_date, end_date)
-            VALUES (?, ?, ?, ?, ?, ?)
-          `).run(
-            req.user!.id,
-            newCategoryId,
-            budget.amount,
-            budget.period,
-            budget.start_date,
-            budget.end_date
-          );
-        }
+        customFieldIdMap.set(field.id, result.lastInsertRowid);
       }
 
       // Restore expenses
-      const expenseMap = new Map();
-      for (const expense of backup.expenses) {
-        const newCategoryId = categoryMap.get(expense.category_id);
-        if (newCategoryId) {
-          const result = db.prepare(`
-            INSERT INTO expenses (
-              user_id, amount, category_id, description, date,
-              receipt_path, is_recurring, recurring_frequency,
-              currency_code, original_amount
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `).run(
-            req.user!.id,
-            expense.amount,
-            newCategoryId,
-            expense.description,
-            expense.date,
-            null, // Don't restore receipt paths
-            expense.is_recurring,
-            expense.recurring_frequency,
-            expense.currency_code,
-            expense.original_amount
-          );
+      const expenseIdMap = new Map();
+      for (const expense of backup.data.expenses) {
+        const result = db.prepare(`
+          INSERT INTO expenses (user_id, amount, category_id, description, date, receipt_path, is_recurring, recurring_frequency, currency_code, original_amount)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          req.user!.id,
+          expense.amount,
+          categoryIdMap.get(expense.category_id),
+          expense.description,
+          expense.date,
+          expense.receipt_path,
+          expense.is_recurring,
+          expense.recurring_frequency,
+          expense.currency_code || 'USD',
+          expense.original_amount
+        );
+        expenseIdMap.set(expense.id, result.lastInsertRowid);
+      }
 
-          const newExpenseId = result.lastInsertRowid;
-          expenseMap.set(expense.id, newExpenseId);
+      // Restore budgets
+      for (const budget of backup.data.budgets) {
+        db.prepare(`
+          INSERT INTO budgets (user_id, category_id, amount, period, start_date, end_date)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `).run(
+          req.user!.id,
+          categoryIdMap.get(budget.category_id),
+          budget.amount,
+          budget.period,
+          budget.start_date,
+          budget.end_date
+        );
+      }
 
-          // Restore expense tags
-          if (expense.tag_ids) {
-            const tagIds = expense.tag_ids.split(',').map((id: string) => parseInt(id));
-            for (const oldTagId of tagIds) {
-              const newTagId = tagMap.get(oldTagId);
-              if (newTagId) {
-                db.prepare('INSERT INTO expense_tags (expense_id, tag_id) VALUES (?, ?)')
-                  .run(newExpenseId, newTagId);
-              }
-            }
-          }
+      // Restore expense tags
+      for (const expenseTag of backup.data.expense_tags) {
+        const newExpenseId = expenseIdMap.get(expenseTag.expense_id);
+        const newTagId = tagIdMap.get(expenseTag.tag_id);
+        if (newExpenseId && newTagId) {
+          db.prepare(`
+            INSERT OR IGNORE INTO expense_tags (expense_id, tag_id)
+            VALUES (?, ?)
+          `).run(newExpenseId, newTagId);
         }
       }
 
       // Restore expense custom fields
-      for (const ecf of backup.expense_custom_fields || []) {
-        const newExpenseId = expenseMap.get(ecf.expense_id);
-        const newFieldId = customFieldMap.get(ecf.custom_field_id);
-        
+      for (const ecf of backup.data.expense_custom_fields) {
+        const newExpenseId = expenseIdMap.get(ecf.expense_id);
+        const newFieldId = customFieldIdMap.get(ecf.custom_field_id);
         if (newExpenseId && newFieldId) {
           db.prepare(`
-            INSERT INTO expense_custom_fields (expense_id, custom_field_id, value)
+            INSERT OR IGNORE INTO expense_custom_fields (expense_id, custom_field_id, value)
             VALUES (?, ?, ?)
           `).run(newExpenseId, newFieldId, ecf.value);
         }
@@ -434,11 +379,10 @@ router.post('/restore', authenticateToken, upload.single('file'), async (req, re
         success: true,
         message: 'Backup restored successfully',
         restored: {
-          categories: backup.categories.length,
-          tags: backup.tags.length,
-          custom_fields: backup.custom_fields?.length || 0,
-          budgets: backup.budgets.length,
-          expenses: backup.expenses.length,
+          expenses: backup.data.expenses.length,
+          categories: backup.data.categories.length,
+          tags: backup.data.tags.length,
+          budgets: backup.data.budgets.length,
         },
       });
     } catch (error) {
@@ -451,7 +395,7 @@ router.post('/restore', authenticateToken, upload.single('file'), async (req, re
   }
 });
 
-// Get import template
+// Download import template
 router.get('/template', authenticateToken, (req, res) => {
   try {
     const template = [
@@ -465,7 +409,7 @@ router.get('/template', authenticateToken, (req, res) => {
       },
       {
         date: '2024-01-16',
-        amount: 25.50,
+        amount: 30.00,
         description: 'Gas station',
         category: 'Transportation',
         currency_code: 'USD',
@@ -473,9 +417,9 @@ router.get('/template', authenticateToken, (req, res) => {
       },
     ];
 
-    const worksheet = XLSX.utils.json_to_sheet(template);
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Template');
+    const worksheet = XLSX.utils.json_to_sheet(template);
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Expenses');
 
     const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
 
