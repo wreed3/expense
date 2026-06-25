@@ -2,11 +2,9 @@ import { create } from 'zustand';
 
 export interface Tag {
   id: number;
-  user_id: number;
   name: string;
-  color: string;
-  created_at?: string;
-  expense_count?: number;
+  user_id: number;
+  created_at: string;
 }
 
 interface TagState {
@@ -14,10 +12,9 @@ interface TagState {
   isLoading: boolean;
   error: string | null;
   fetchTags: () => Promise<void>;
-  createTag: (data: { name: string; color?: string }) => Promise<Tag>;
-  updateTag: (id: number, data: { name?: string; color?: string }) => Promise<void>;
+  addTag: (name: string) => Promise<void>;
   deleteTag: (id: number) => Promise<void>;
-  searchTags: (query: string) => Promise<Tag[]>;
+  getTagsByExpense: (expenseId: number) => Promise<string[]>;
 }
 
 export const useTagStore = create<TagState>((set, get) => ({
@@ -28,105 +25,110 @@ export const useTagStore = create<TagState>((set, get) => ({
   fetchTags: async () => {
     set({ isLoading: true, error: null });
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:3001/api/tags', {
+      const response = await fetch('/api/tags', {
         headers: {
-          'Authorization': `Bearer ${token}`,
-        },
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
       });
 
-      if (!response.ok) throw new Error('Failed to fetch tags');
+      if (!response.ok) {
+        throw new Error('Failed to fetch tags');
+      }
 
       const data = await response.json();
       set({ tags: data, isLoading: false });
-    } catch (error: any) {
-      set({ error: error.message, isLoading: false });
+    } catch (error) {
+      console.error('Error fetching tags:', error);
+      set({
+        error: error instanceof Error ? error.message : 'Failed to fetch tags',
+        isLoading: false
+      });
     }
   },
 
-  createTag: async (data) => {
+  addTag: async (name: string) => {
+    set({ isLoading: true, error: null });
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:3001/api/tags', {
+      // Check if tag already exists
+      const existingTag = get().tags.find(t => t.name.toLowerCase() === name.toLowerCase());
+      if (existingTag) {
+        set({ isLoading: false });
+        return;
+      }
+
+      const response = await fetch('/api/tags', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
         },
-        body: JSON.stringify(data),
+        body: JSON.stringify({ name })
       });
 
-      if (!response.ok) throw new Error('Failed to create tag');
+      if (!response.ok) {
+        throw new Error('Failed to add tag');
+      }
 
-      const tag = await response.json();
-      set(state => ({ tags: [...state.tags, tag] }));
-      return tag;
-    } catch (error: any) {
-      set({ error: error.message });
-      throw error;
-    }
-  },
-
-  updateTag: async (id, data) => {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`http://localhost:3001/api/tags/${id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify(data),
-      });
-
-      if (!response.ok) throw new Error('Failed to update tag');
-
-      const updatedTag = await response.json();
+      const newTag = await response.json();
       set(state => ({
-        tags: state.tags.map(t => t.id === id ? updatedTag : t),
+        tags: [...state.tags, newTag],
+        isLoading: false
       }));
-    } catch (error: any) {
-      set({ error: error.message });
+    } catch (error) {
+      console.error('Error adding tag:', error);
+      set({
+        error: error instanceof Error ? error.message : 'Failed to add tag',
+        isLoading: false
+      });
       throw error;
     }
   },
 
-  deleteTag: async (id) => {
+  deleteTag: async (id: number) => {
+    set({ isLoading: true, error: null });
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`http://localhost:3001/api/tags/${id}`, {
+      const response = await fetch(`/api/tags/${id}`, {
         method: 'DELETE',
         headers: {
-          'Authorization': `Bearer ${token}`,
-        },
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
       });
 
-      if (!response.ok) throw new Error('Failed to delete tag');
+      if (!response.ok) {
+        throw new Error('Failed to delete tag');
+      }
 
       set(state => ({
         tags: state.tags.filter(t => t.id !== id),
+        isLoading: false
       }));
-    } catch (error: any) {
-      set({ error: error.message });
+    } catch (error) {
+      console.error('Error deleting tag:', error);
+      set({
+        error: error instanceof Error ? error.message : 'Failed to delete tag',
+        isLoading: false
+      });
       throw error;
     }
   },
 
-  searchTags: async (query) => {
+  getTagsByExpense: async (expenseId: number) => {
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`http://localhost:3001/api/tags/search?q=${encodeURIComponent(query)}`, {
+      const response = await fetch(`/api/expenses/${expenseId}/tags`, {
         headers: {
-          'Authorization': `Bearer ${token}`,
-        },
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
       });
 
-      if (!response.ok) throw new Error('Failed to search tags');
+      if (!response.ok) {
+        throw new Error('Failed to fetch expense tags');
+      }
 
-      return await response.json();
-    } catch (error: any) {
-      set({ error: error.message });
+      const data = await response.json();
+      return data.tags || [];
+    } catch (error) {
+      console.error('Error fetching expense tags:', error);
       return [];
     }
-  },
+  }
 }));

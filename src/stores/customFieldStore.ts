@@ -1,20 +1,12 @@
 import { create } from 'zustand';
 
-export type CustomFieldType = 'text' | 'number' | 'date' | 'boolean' | 'select';
-
 export interface CustomField {
   id: number;
-  user_id: number;
   name: string;
-  field_type: CustomFieldType;
-  options?: string[];
-  is_required: boolean;
-  created_at?: string;
-}
-
-export interface CustomFieldValue {
-  field_id: number;
-  value: string;
+  type: 'text' | 'number' | 'date' | 'boolean' | 'select';
+  options?: string[]; // For select type
+  required: boolean;
+  user_id: number;
 }
 
 interface CustomFieldState {
@@ -22,13 +14,8 @@ interface CustomFieldState {
   isLoading: boolean;
   error: string | null;
   fetchCustomFields: () => Promise<void>;
-  createCustomField: (data: {
-    name: string;
-    field_type: CustomFieldType;
-    options?: string[];
-    is_required?: boolean;
-  }) => Promise<CustomField>;
-  updateCustomField: (id: number, data: Partial<CustomField>) => Promise<void>;
+  addCustomField: (field: Omit<CustomField, 'id' | 'user_id'>) => Promise<void>;
+  updateCustomField: (id: number, field: Partial<CustomField>) => Promise<void>;
   deleteCustomField: (id: number) => Promise<void>;
 }
 
@@ -40,87 +27,116 @@ export const useCustomFieldStore = create<CustomFieldState>((set, get) => ({
   fetchCustomFields: async () => {
     set({ isLoading: true, error: null });
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:3001/api/custom-fields', {
+      const response = await fetch('/api/custom-fields', {
         headers: {
-          'Authorization': `Bearer ${token}`,
-        },
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
       });
 
-      if (!response.ok) throw new Error('Failed to fetch custom fields');
+      if (!response.ok) {
+        throw new Error('Failed to fetch custom fields');
+      }
 
       const data = await response.json();
       set({ customFields: data, isLoading: false });
-    } catch (error: any) {
-      set({ error: error.message, isLoading: false });
+    } catch (error) {
+      console.error('Error fetching custom fields:', error);
+      set({
+        error: error instanceof Error ? error.message : 'Failed to fetch custom fields',
+        isLoading: false
+      });
     }
   },
 
-  createCustomField: async (data) => {
+  addCustomField: async (field) => {
+    set({ isLoading: true, error: null });
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:3001/api/custom-fields', {
+      const response = await fetch('/api/custom-fields', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
         },
-        body: JSON.stringify(data),
+        body: JSON.stringify(field)
       });
 
-      if (!response.ok) throw new Error('Failed to create custom field');
+      if (!response.ok) {
+        throw new Error('Failed to add custom field');
+      }
 
-      const field = await response.json();
-      set(state => ({ customFields: [...state.customFields, field] }));
-      return field;
-    } catch (error: any) {
-      set({ error: error.message });
+      const newField = await response.json();
+      set(state => ({
+        customFields: [...state.customFields, newField],
+        isLoading: false
+      }));
+    } catch (error) {
+      console.error('Error adding custom field:', error);
+      set({
+        error: error instanceof Error ? error.message : 'Failed to add custom field',
+        isLoading: false
+      });
       throw error;
     }
   },
 
-  updateCustomField: async (id, data) => {
+  updateCustomField: async (id, field) => {
+    set({ isLoading: true, error: null });
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`http://localhost:3001/api/custom-fields/${id}`, {
+      const response = await fetch(`/api/custom-fields/${id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
         },
-        body: JSON.stringify(data),
+        body: JSON.stringify(field)
       });
 
-      if (!response.ok) throw new Error('Failed to update custom field');
+      if (!response.ok) {
+        throw new Error('Failed to update custom field');
+      }
 
       const updatedField = await response.json();
       set(state => ({
-        customFields: state.customFields.map(f => f.id === id ? updatedField : f),
+        customFields: state.customFields.map(f =>
+          f.id === id ? updatedField : f
+        ),
+        isLoading: false
       }));
-    } catch (error: any) {
-      set({ error: error.message });
+    } catch (error) {
+      console.error('Error updating custom field:', error);
+      set({
+        error: error instanceof Error ? error.message : 'Failed to update custom field',
+        isLoading: false
+      });
       throw error;
     }
   },
 
   deleteCustomField: async (id) => {
+    set({ isLoading: true, error: null });
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`http://localhost:3001/api/custom-fields/${id}`, {
+      const response = await fetch(`/api/custom-fields/${id}`, {
         method: 'DELETE',
         headers: {
-          'Authorization': `Bearer ${token}`,
-        },
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
       });
 
-      if (!response.ok) throw new Error('Failed to delete custom field');
+      if (!response.ok) {
+        throw new Error('Failed to delete custom field');
+      }
 
       set(state => ({
         customFields: state.customFields.filter(f => f.id !== id),
+        isLoading: false
       }));
-    } catch (error: any) {
-      set({ error: error.message });
+    } catch (error) {
+      console.error('Error deleting custom field:', error);
+      set({
+        error: error instanceof Error ? error.message : 'Failed to delete custom field',
+        isLoading: false
+      });
       throw error;
     }
-  },
+  }
 }));
