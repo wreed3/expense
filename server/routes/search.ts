@@ -2,7 +2,6 @@ import express from 'express';
 import { authenticateToken } from '../middleware/auth';
 import { getDatabase } from '../index';
 import { logger } from '../utils/logger';
-import { cache, CacheKeys } from '../utils/cache';
 import { z } from 'zod';
 
 const router = express.Router();
@@ -40,14 +39,10 @@ router.post('/', authenticateToken, async (req, res) => {
     // Build dynamic query
     let query = `
       SELECT DISTINCT e.*,
-        c.name as category_name,
-        json_group_array(
-          DISTINCT json_object('id', t.id, 'name', t.name, 'color', t.color)
-        ) FILTER (WHERE t.id IS NOT NULL) as tags
+        c.name as category_name
       FROM expenses e
       LEFT JOIN categories c ON e.category_id = c.id
       LEFT JOIN expense_tags et ON e.id = et.expense_id
-      LEFT JOIN tags t ON et.tag_id = t.id
       WHERE e.user_id = ?
     `;
     
@@ -72,10 +67,7 @@ router.post('/', authenticateToken, async (req, res) => {
 
     // Tag filter
     if (filters.tags && filters.tags.length > 0) {
-      query += ` AND e.id IN (
-        SELECT expense_id FROM expense_tags 
-        WHERE tag_id IN (${filters.tags.map(() => '?').join(',')})
-      )`;
+      query += ` AND et.tag_id IN (${filters.tags.map(() => '?').join(',')})`;
       params.push(...filters.tags);
     }
 
@@ -120,8 +112,6 @@ router.post('/', authenticateToken, async (req, res) => {
       }
     }
 
-    query += ` GROUP BY e.id`;
-
     // Sorting
     const sortBy = filters.sortBy || 'date';
     const sortOrder = filters.sortOrder || 'desc';
@@ -133,12 +123,42 @@ router.post('/', authenticateToken, async (req, res) => {
 
     // Execute query
     const stmt = db.prepare(query);
-    const expenses = stmt.all(...params).map((expense: any) => ({
-      ...expense,
-      tags: expense.tags ? JSON.parse(expense.tags) : []
-    }));
+    const expenses = stmt.all(...params);
 
-    // Get total count
+    // Get tags for each expense
+    const expenseIds = expenses.map((e: any) => e.id);
+    let expensesWithTags = expenses;
+
+    if (expenseIds.length > 0) {
+      const tagsStmt = db.prepare(`
+        SELECT et.expense_id, t.id, t.name, t.color
+        FROM expense_tags et
+        JOIN tags t ON et.tag_id = t.id
+        WHERE et.expense_id IN (${expenseIds.map(() => '?').join(',')})
+      `);
+      
+      const tagRows = tagsStmt.all(...expenseIds) as any[];
+      
+      // Group tags by expense
+      const tagsByExpense = tagRows.reduce((acc: any, row: any) => {
+        if (!acc[row.expense_id]) {
+          acc[row.expense_id] = [];
+        }
+        acc[row.expense_id].push({
+          id: row.id,
+          name: row.name,
+          color: row.color
+        });
+        return acc;
+      }, {});
+
+      expensesWithTags = expenses.map((expense: any) => ({
+        ...expense,
+        tags: tagsByExpense[expense.id] || []
+      }));
+    }
+
+    // Get total count for pagination
     let countQuery = `
       SELECT COUNT(DISTINCT e.id) as total
       FROM expenses e
@@ -146,32 +166,21 @@ router.post('/', authenticateToken, async (req, res) => {
       WHERE e.user_id = ?
     `;
     
-    const countParams: any[] = [userId];
-    
-    // Apply same filters for count (excluding pagination)
+    // Apply same filters for count
+    const countParams = [userId];
     if (filters.query) {
-      countQuery += ` AND (
-        e.description LIKE ? OR 
-        e.merchant LIKE ? OR 
-        e.notes LIKE ?
-      )`;
+      countQuery += ` AND (e.description LIKE ? OR e.merchant LIKE ? OR e.notes LIKE ?)`;
       const searchTerm = `%${filters.query}%`;
       countParams.push(searchTerm, searchTerm, searchTerm);
     }
-
     if (filters.categories && filters.categories.length > 0) {
       countQuery += ` AND e.category_id IN (${filters.categories.map(() => '?').join(',')})`;
       countParams.push(...filters.categories);
     }
-
     if (filters.tags && filters.tags.length > 0) {
-      countQuery += ` AND e.id IN (
-        SELECT expense_id FROM expense_tags 
-        WHERE tag_id IN (${filters.tags.map(() => '?').join(',')})
-      )`;
+      countQuery += ` AND et.tag_id IN (${filters.tags.map(() => '?').join(',')})`;
       countParams.push(...filters.tags);
     }
-
     if (filters.dateFrom) {
       countQuery += ` AND e.date >= ?`;
       countParams.push(filters.dateFrom);
@@ -180,7 +189,6 @@ router.post('/', authenticateToken, async (req, res) => {
       countQuery += ` AND e.date <= ?`;
       countParams.push(filters.dateTo);
     }
-
     if (filters.amountMin !== undefined) {
       countQuery += ` AND e.amount >= ?`;
       countParams.push(filters.amountMin);
@@ -189,17 +197,14 @@ router.post('/', authenticateToken, async (req, res) => {
       countQuery += ` AND e.amount <= ?`;
       countParams.push(filters.amountMax);
     }
-
     if (filters.currency) {
       countQuery += ` AND e.currency = ?`;
       countParams.push(filters.currency);
     }
-
     if (filters.merchant) {
       countQuery += ` AND e.merchant LIKE ?`;
       countParams.push(`%${filters.merchant}%`);
     }
-
     if (filters.hasReceipt !== undefined) {
       if (filters.hasReceipt) {
         countQuery += ` AND e.receipt_url IS NOT NULL`;
@@ -212,7 +217,7 @@ router.post('/', authenticateToken, async (req, res) => {
     const { total } = countStmt.get(...countParams) as { total: number };
 
     res.json({
-      expenses,
+      expenses: expensesWithTags,
       pagination: {
         page,
         limit,
