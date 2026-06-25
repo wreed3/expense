@@ -1,535 +1,410 @@
 import express from 'express';
-import multer from 'multer';
-import path from 'path';
-import fs from 'fs';
-import { authenticateToken } from '../middleware/auth.js';
-import { cacheMiddleware, invalidateCache } from '../middleware/cache.js';
-import { cacheKeys } from '../utils/cache.js';
-import { getDatabase } from '../index.js';
 import { z } from 'zod';
+import multer from 'multer';
+import { db } from '../index.js';
+import { authenticate } from '../middleware/auth.js';
+import { logger } from '../utils/logger.js';
 
 const router = express.Router();
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const uploadDir = process.env.UPLOAD_DIR || './uploads';
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
-    cb(null, uploadDir);
-  },
+  destination: './uploads/',
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, uniqueSuffix + path.extname(file.originalname));
+    cb(null, file.fieldname + '-' + uniqueSuffix + '.' + file.originalname.split('.').pop());
   }
 });
 
 const upload = multer({
   storage,
-  limits: {
-    fileSize: parseInt(process.env.MAX_FILE_SIZE || '5242880') // 5MB default
-  },
+  limits: { fileSize: parseInt(process.env.MAX_FILE_SIZE || '5242880') },
   fileFilter: (req, file, cb) => {
-    const allowedTypes = /jpeg|jpg|png|pdf/;
-    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    const mimetype = allowedTypes.test(file.mimetype);
-
-    if (mimetype && extname) {
-      return cb(null, true);
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'application/pdf'];
+    if (allowedTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid file type'));
     }
-    cb(new Error('Only .png, .jpg, .jpeg and .pdf files are allowed'));
   }
 });
 
+// Validation schemas
 const expenseSchema = z.object({
-  description: z.string().min(1),
   amount: z.number().positive(),
+  currency: z.string().length(3).optional(),
+  description: z.string().min(1).max(500),
   category_id: z.number().int().positive(),
-  date: z.string(),
-  payment_method: z.string().optional(),
-  notes: z.string().optional(),
-  is_recurring: z.boolean().default(false),
-  recurrence_frequency: z.enum(['daily', 'weekly', 'monthly', 'yearly']).optional(),
-  recurrence_end_date: z.string().optional(),
-  currency_code: z.string().length(3).default('USD'),
-  original_amount: z.number().positive().optional(),
-  tag_ids: z.array(z.number()).optional(),
-  custom_field_values: z.array(z.object({
-    field_id: z.number(),
-    value: z.string(),
-  })).optional(),
+  date: z.string().datetime(),
+  notes: z.string().max(1000).optional(),
+  tags: z.array(z.string()).optional(),
+  custom_fields: z.record(z.any()).optional()
 });
 
-// Helper functions
-function getExpenseTags(db: any, expenseId: number) {
-  const stmt = db.prepare(`
-    SELECT t.* FROM tags t
-    INNER JOIN expense_tags et ON t.id = et.tag_id
-    WHERE et.expense_id = ?
-  `);
-  return stmt.all(expenseId);
-}
+const searchSchema = z.object({
+  query: z.string().optional(),
+  category_id: z.number().int().positive().optional(),
+  min_amount: z.number().positive().optional(),
+  max_amount: z.number().positive().optional(),
+  start_date: z.string().datetime().optional(),
+  end_date: z.string().datetime().optional(),
+  tags: z.array(z.string()).optional(),
+  currency: z.string().length(3).optional(),
+  sort_by: z.enum(['date', 'amount', 'description']).optional(),
+  sort_order: z.enum(['asc', 'desc']).optional(),
+  page: z.number().int().positive().optional(),
+  limit: z.number().int().positive().max(100).optional()
+});
 
-function getExpenseCustomFields(db: any, expenseId: number) {
-  const stmt = db.prepare(`
-    SELECT cf.*, cfv.value
-    FROM custom_fields cf
-    LEFT JOIN expense_custom_field_values cfv 
-      ON cf.id = cfv.custom_field_id AND cfv.expense_id = ?
-  `);
-  const fields = stmt.all(expenseId);
-  return fields.map((field: any) => ({
-    ...field,
-    options: field.options ? JSON.parse(field.options) : undefined,
-    is_required: Boolean(field.is_required),
-  }));
-}
+// Get all expenses with advanced filtering
+router.get('/', authenticate, async (req, res) => {
+  try {
+    const userId = req.user!.id;
+    const filters = searchSchema.parse({
+      ...req.query,
+      category_id: req.query.category_id ? parseInt(req.query.category_id as string) : undefined,
+      min_amount: req.query.min_amount ? parseFloat(req.query.min_amount as string) : undefined,
+      max_amount: req.query.max_amount ? parseFloat(req.query.max_amount as string) : undefined,
+      tags: req.query.tags ? JSON.parse(req.query.tags as string) : undefined,
+      page: req.query.page ? parseInt(req.query.page as string) : 1,
+      limit: req.query.limit ? parseInt(req.query.limit as string) : 50
+    });
 
-function setExpenseTags(db: any, expenseId: number, tagIds: number[]) {
-  // Delete existing tags
-  const deleteStmt = db.prepare('DELETE FROM expense_tags WHERE expense_id = ?');
-  deleteStmt.run(expenseId);
+    let query = `
+      SELECT e.*, c.name as category_name, c.color as category_color
+      FROM expenses e
+      LEFT JOIN categories c ON e.category_id = c.id
+      WHERE e.user_id = ?
+    `;
+    const params: any[] = [userId];
 
-  // Insert new tags
-  if (tagIds && tagIds.length > 0) {
-    const insertStmt = db.prepare('INSERT INTO expense_tags (expense_id, tag_id) VALUES (?, ?)');
-    for (const tagId of tagIds) {
-      insertStmt.run(expenseId, tagId);
+    if (filters.query) {
+      query += ` AND (e.description LIKE ? OR e.notes LIKE ?)`;
+      params.push(`%${filters.query}%`, `%${filters.query}%`);
     }
-  }
-}
 
-function setExpenseCustomFields(db: any, expenseId: number, customFieldValues: Array<{field_id: number, value: string}>) {
-  if (!customFieldValues || customFieldValues.length === 0) return;
-
-  const upsertStmt = db.prepare(`
-    INSERT INTO expense_custom_field_values (expense_id, custom_field_id, value, updated_at)
-    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-    ON CONFLICT(expense_id, custom_field_id) 
-    DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
-  `);
-
-  for (const { field_id, value } of customFieldValues) {
-    upsertStmt.run(expenseId, field_id, value);
-  }
-}
-
-// Get all expenses with caching
-router.get('/', 
-  authenticateToken,
-  cacheMiddleware({ 
-    ttl: 60,
-    keyGenerator: (req) => {
-      const query = new URLSearchParams(req.query as any).toString();
-      return `${cacheKeys.expenses(req.user!.id)}:${query}`;
+    if (filters.category_id) {
+      query += ` AND e.category_id = ?`;
+      params.push(filters.category_id);
     }
-  }),
-  (req, res) => {
-    try {
-      const db = getDatabase();
-      const { start_date, end_date, category_id, min_amount, max_amount } = req.query;
 
-      let query = `
-        SELECT 
-          e.*,
-          c.name as category_name,
-          c.color as category_color
-        FROM expenses e
-        LEFT JOIN categories c ON e.category_id = c.id
-        WHERE e.user_id = ?
-      `;
-      const params: any[] = [req.user!.id];
-
-      if (start_date) {
-        query += ' AND e.date >= ?';
-        params.push(start_date);
-      }
-      if (end_date) {
-        query += ' AND e.date <= ?';
-        params.push(end_date);
-      }
-      if (category_id) {
-        query += ' AND e.category_id = ?';
-        params.push(category_id);
-      }
-      if (min_amount) {
-        query += ' AND e.amount >= ?';
-        params.push(min_amount);
-      }
-      if (max_amount) {
-        query += ' AND e.amount <= ?';
-        params.push(max_amount);
-      }
-
-      query += ' ORDER BY e.date DESC, e.id DESC';
-
-      const stmt = db.prepare(query);
-      const expenses = stmt.all(...params);
-
-      // Get tags and custom fields for each expense
-      const expensesWithDetails = expenses.map((expense: any) => {
-        const tags = getExpenseTags(db, expense.id);
-        const customFields = getExpenseCustomFields(db, expense.id);
-        
-        return {
-          ...expense,
-          tags,
-          custom_fields: customFields,
-        };
-      });
-
-      res.json(expensesWithDetails);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
+    if (filters.min_amount) {
+      query += ` AND e.amount >= ?`;
+      params.push(filters.min_amount);
     }
-  }
-);
 
-// Get single expense
-router.get('/:id',
-  authenticateToken,
-  cacheMiddleware({ 
-    ttl: 60,
-    keyGenerator: (req) => cacheKeys.expense(parseInt(req.params.id))
-  }),
-  (req, res) => {
-    try {
-      const db = getDatabase();
-      const stmt = db.prepare(`
-        SELECT 
-          e.*,
-          c.name as category_name,
-          c.color as category_color
-        FROM expenses e
-        LEFT JOIN categories c ON e.category_id = c.id
-        WHERE e.id = ? AND e.user_id = ?
-      `);
-      
-      const expense = stmt.get(req.params.id, req.user!.id);
+    if (filters.max_amount) {
+      query += ` AND e.amount <= ?`;
+      params.push(filters.max_amount);
+    }
 
-      if (!expense) {
-        return res.status(404).json({ error: 'Expense not found' });
-      }
+    if (filters.start_date) {
+      query += ` AND e.date >= ?`;
+      params.push(filters.start_date);
+    }
 
-      // Get tags and custom fields
-      const tags = getExpenseTags(db, expense.id);
-      const customFields = getExpenseCustomFields(db, expense.id);
+    if (filters.end_date) {
+      query += ` AND e.date <= ?`;
+      params.push(filters.end_date);
+    }
 
-      res.json({
+    if (filters.currency) {
+      query += ` AND e.currency = ?`;
+      params.push(filters.currency);
+    }
+
+    if (filters.tags && filters.tags.length > 0) {
+      query += ` AND e.id IN (
+        SELECT expense_id FROM expense_tags
+        WHERE tag_id IN (SELECT id FROM tags WHERE name IN (${filters.tags.map(() => '?').join(',')}))
+        GROUP BY expense_id
+        HAVING COUNT(DISTINCT tag_id) = ?
+      )`;
+      params.push(...filters.tags, filters.tags.length);
+    }
+
+    const sortBy = filters.sort_by || 'date';
+    const sortOrder = filters.sort_order || 'desc';
+    query += ` ORDER BY e.${sortBy} ${sortOrder}`;
+
+    const offset = ((filters.page || 1) - 1) * (filters.limit || 50);
+    query += ` LIMIT ? OFFSET ?`;
+    params.push(filters.limit || 50, offset);
+
+    const expenses = db.prepare(query).all(...params);
+
+    // Get tags for each expense
+    const expensesWithTags = expenses.map((expense: any) => {
+      const tags = db.prepare(`
+        SELECT t.name FROM tags t
+        JOIN expense_tags et ON t.id = et.tag_id
+        WHERE et.expense_id = ?
+      `).all(expense.id).map((t: any) => t.name);
+
+      return {
         ...expense,
         tags,
-        custom_fields: customFields,
-      });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
+        custom_fields: expense.custom_fields ? JSON.parse(expense.custom_fields) : {}
+      };
+    });
+
+    // Get total count for pagination
+    let countQuery = `SELECT COUNT(*) as total FROM expenses e WHERE e.user_id = ?`;
+    const countParams: any[] = [userId];
+
+    if (filters.query) {
+      countQuery += ` AND (e.description LIKE ? OR e.notes LIKE ?)`;
+      countParams.push(`%${filters.query}%`, `%${filters.query}%`);
     }
+
+    if (filters.category_id) {
+      countQuery += ` AND e.category_id = ?`;
+      countParams.push(filters.category_id);
+    }
+
+    if (filters.min_amount) {
+      countQuery += ` AND e.amount >= ?`;
+      countParams.push(filters.min_amount);
+    }
+
+    if (filters.max_amount) {
+      countQuery += ` AND e.amount <= ?`;
+      countParams.push(filters.max_amount);
+    }
+
+    if (filters.start_date) {
+      countQuery += ` AND e.date >= ?`;
+      countParams.push(filters.start_date);
+    }
+
+    if (filters.end_date) {
+      countQuery += ` AND e.date <= ?`;
+      countParams.push(filters.end_date);
+    }
+
+    if (filters.currency) {
+      countQuery += ` AND e.currency = ?`;
+      countParams.push(filters.currency);
+    }
+
+    const { total } = db.prepare(countQuery).get(...countParams) as { total: number };
+
+    res.json({
+      expenses: expensesWithTags,
+      pagination: {
+        page: filters.page || 1,
+        limit: filters.limit || 50,
+        total,
+        pages: Math.ceil(total / (filters.limit || 50))
+      }
+    });
+  } catch (error) {
+    logger.error('Error fetching expenses:', error);
+    res.status(500).json({ error: 'Failed to fetch expenses' });
   }
-);
+});
+
+// Get expense by ID
+router.get('/:id', authenticate, async (req, res) => {
+  try {
+    const userId = req.user!.id;
+    const expenseId = parseInt(req.params.id);
+
+    const expense = db.prepare(`
+      SELECT e.*, c.name as category_name, c.color as category_color
+      FROM expenses e
+      LEFT JOIN categories c ON e.category_id = c.id
+      WHERE e.id = ? AND e.user_id = ?
+    `).get(expenseId, userId);
+
+    if (!expense) {
+      return res.status(404).json({ error: 'Expense not found' });
+    }
+
+    const tags = db.prepare(`
+      SELECT t.name FROM tags t
+      JOIN expense_tags et ON t.id = et.tag_id
+      WHERE et.expense_id = ?
+    `).all(expenseId).map((t: any) => t.name);
+
+    res.json({
+      ...expense,
+      tags,
+      custom_fields: (expense as any).custom_fields ? JSON.parse((expense as any).custom_fields) : {}
+    });
+  } catch (error) {
+    logger.error('Error fetching expense:', error);
+    res.status(500).json({ error: 'Failed to fetch expense' });
+  }
+});
 
 // Create expense
-router.post('/',
-  authenticateToken,
-  invalidateCache(cacheKeys.expensesPattern('*')),
-  (req, res) => {
-    try {
-      const validatedData = expenseSchema.parse(req.body);
-      const db = getDatabase();
+router.post('/', authenticate, upload.single('receipt'), async (req, res) => {
+  try {
+    const userId = req.user!.id;
+    const data = expenseSchema.parse({
+      ...req.body,
+      amount: parseFloat(req.body.amount),
+      category_id: parseInt(req.body.category_id),
+      tags: req.body.tags ? JSON.parse(req.body.tags) : [],
+      custom_fields: req.body.custom_fields ? JSON.parse(req.body.custom_fields) : {}
+    });
 
-      const stmt = db.prepare(`
-        INSERT INTO expenses (
-          user_id, description, amount, category_id, date, 
-          payment_method, notes, is_recurring, recurrence_frequency, 
-          recurrence_end_date, currency_code, original_amount
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
+    const receiptPath = req.file ? `/uploads/${req.file.filename}` : null;
 
-      const info = stmt.run(
-        req.user!.id,
-        validatedData.description,
-        validatedData.amount,
-        validatedData.category_id,
-        validatedData.date,
-        validatedData.payment_method || null,
-        validatedData.notes || null,
-        validatedData.is_recurring ? 1 : 0,
-        validatedData.recurrence_frequency || null,
-        validatedData.recurrence_end_date || null,
-        validatedData.currency_code,
-        validatedData.original_amount || null
-      );
+    const result = db.prepare(`
+      INSERT INTO expenses (user_id, amount, currency, description, category_id, date, notes, receipt_path, custom_fields)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      userId,
+      data.amount,
+      data.currency || 'USD',
+      data.description,
+      data.category_id,
+      data.date,
+      data.notes || null,
+      receiptPath,
+      JSON.stringify(data.custom_fields || {})
+    );
 
-      const expenseId = Number(info.lastInsertRowid);
+    const expenseId = result.lastInsertRowid as number;
 
-      // Set tags if provided
-      if (validatedData.tag_ids) {
-        setExpenseTags(db, expenseId, validatedData.tag_ids);
+    // Add tags
+    if (data.tags && data.tags.length > 0) {
+      for (const tagName of data.tags) {
+        let tag = db.prepare('SELECT id FROM tags WHERE name = ? AND user_id = ?').get(tagName, userId) as { id: number } | undefined;
+        
+        if (!tag) {
+          const tagResult = db.prepare('INSERT INTO tags (name, user_id) VALUES (?, ?)').run(tagName, userId);
+          tag = { id: tagResult.lastInsertRowid as number };
+        }
+
+        db.prepare('INSERT INTO expense_tags (expense_id, tag_id) VALUES (?, ?)').run(expenseId, tag.id);
       }
-
-      // Set custom fields if provided
-      if (validatedData.custom_field_values) {
-        setExpenseCustomFields(db, expenseId, validatedData.custom_field_values);
-      }
-
-      // Get the created expense with all details
-      const getStmt = db.prepare(`
-        SELECT 
-          e.*,
-          c.name as category_name,
-          c.color as category_color
-        FROM expenses e
-        LEFT JOIN categories c ON e.category_id = c.id
-        WHERE e.id = ?
-      `);
-      
-      const expense = getStmt.get(expenseId);
-      const tags = getExpenseTags(db, expenseId);
-      const customFields = getExpenseCustomFields(db, expenseId);
-
-      res.status(201).json({
-        ...expense,
-        tags,
-        custom_fields: customFields,
-      });
-    } catch (error: any) {
-      if (error.name === 'ZodError') {
-        return res.status(400).json({ error: 'Invalid expense data', details: error.errors });
-      }
-      res.status(500).json({ error: error.message });
     }
+
+    const expense = db.prepare(`
+      SELECT e.*, c.name as category_name, c.color as category_color
+      FROM expenses e
+      LEFT JOIN categories c ON e.category_id = c.id
+      WHERE e.id = ?
+    `).get(expenseId);
+
+    const tags = db.prepare(`
+      SELECT t.name FROM tags t
+      JOIN expense_tags et ON t.id = et.tag_id
+      WHERE et.expense_id = ?
+    `).all(expenseId).map((t: any) => t.name);
+
+    res.status(201).json({
+      ...expense,
+      tags,
+      custom_fields: data.custom_fields
+    });
+  } catch (error) {
+    logger.error('Error creating expense:', error);
+    res.status(500).json({ error: 'Failed to create expense' });
   }
-);
+});
 
 // Update expense
-router.put('/:id',
-  authenticateToken,
-  invalidateCache(cacheKeys.expensesPattern('*')),
-  (req, res) => {
-    try {
-      const validatedData = expenseSchema.partial().parse(req.body);
-      const db = getDatabase();
-
-      // Check if expense exists and belongs to user
-      const checkStmt = db.prepare('SELECT id FROM expenses WHERE id = ? AND user_id = ?');
-      const exists = checkStmt.get(req.params.id, req.user!.id);
-
-      if (!exists) {
-        return res.status(404).json({ error: 'Expense not found' });
-      }
-
-      const fields: string[] = [];
-      const values: any[] = [];
-
-      if (validatedData.description !== undefined) {
-        fields.push('description = ?');
-        values.push(validatedData.description);
-      }
-      if (validatedData.amount !== undefined) {
-        fields.push('amount = ?');
-        values.push(validatedData.amount);
-      }
-      if (validatedData.category_id !== undefined) {
-        fields.push('category_id = ?');
-        values.push(validatedData.category_id);
-      }
-      if (validatedData.date !== undefined) {
-        fields.push('date = ?');
-        values.push(validatedData.date);
-      }
-      if (validatedData.payment_method !== undefined) {
-        fields.push('payment_method = ?');
-        values.push(validatedData.payment_method);
-      }
-      if (validatedData.notes !== undefined) {
-        fields.push('notes = ?');
-        values.push(validatedData.notes);
-      }
-      if (validatedData.is_recurring !== undefined) {
-        fields.push('is_recurring = ?');
-        values.push(validatedData.is_recurring ? 1 : 0);
-      }
-      if (validatedData.recurrence_frequency !== undefined) {
-        fields.push('recurrence_frequency = ?');
-        values.push(validatedData.recurrence_frequency);
-      }
-      if (validatedData.recurrence_end_date !== undefined) {
-        fields.push('recurrence_end_date = ?');
-        values.push(validatedData.recurrence_end_date);
-      }
-      if (validatedData.currency_code !== undefined) {
-        fields.push('currency_code = ?');
-        values.push(validatedData.currency_code);
-      }
-      if (validatedData.original_amount !== undefined) {
-        fields.push('original_amount = ?');
-        values.push(validatedData.original_amount);
-      }
-
-      if (fields.length > 0) {
-        values.push(req.params.id, req.user!.id);
-        const updateStmt = db.prepare(`
-          UPDATE expenses
-          SET ${fields.join(', ')}
-          WHERE id = ? AND user_id = ?
-        `);
-        updateStmt.run(...values);
-      }
-
-      // Update tags if provided
-      if (validatedData.tag_ids !== undefined) {
-        setExpenseTags(db, Number(req.params.id), validatedData.tag_ids);
-      }
-
-      // Update custom fields if provided
-      if (validatedData.custom_field_values !== undefined) {
-        setExpenseCustomFields(db, Number(req.params.id), validatedData.custom_field_values);
-      }
-
-      // Get updated expense
-      const getStmt = db.prepare(`
-        SELECT 
-          e.*,
-          c.name as category_name,
-          c.color as category_color
-        FROM expenses e
-        LEFT JOIN categories c ON e.category_id = c.id
-        WHERE e.id = ?
-      `);
-      
-      const expense = getStmt.get(req.params.id);
-      const tags = getExpenseTags(db, Number(req.params.id));
-      const customFields = getExpenseCustomFields(db, Number(req.params.id));
-
-      res.json({
-        ...expense,
-        tags,
-        custom_fields: customFields,
-      });
-    } catch (error: any) {
-      if (error.name === 'ZodError') {
-        return res.status(400).json({ error: 'Invalid expense data', details: error.errors });
-      }
-      res.status(500).json({ error: error.message });
+router.put('/:id', authenticate, upload.single('receipt'), async (req, res) => {
+  try {
+    const userId = req.user!.id;
+    const expenseId = parseInt(req.params.id);
+    
+    const existing = db.prepare('SELECT * FROM expenses WHERE id = ? AND user_id = ?').get(expenseId, userId);
+    if (!existing) {
+      return res.status(404).json({ error: 'Expense not found' });
     }
+
+    const data = expenseSchema.parse({
+      ...req.body,
+      amount: parseFloat(req.body.amount),
+      category_id: parseInt(req.body.category_id),
+      tags: req.body.tags ? JSON.parse(req.body.tags) : [],
+      custom_fields: req.body.custom_fields ? JSON.parse(req.body.custom_fields) : {}
+    });
+
+    const receiptPath = req.file ? `/uploads/${req.file.filename}` : (existing as any).receipt_path;
+
+    db.prepare(`
+      UPDATE expenses
+      SET amount = ?, currency = ?, description = ?, category_id = ?, date = ?, notes = ?, receipt_path = ?, custom_fields = ?
+      WHERE id = ? AND user_id = ?
+    `).run(
+      data.amount,
+      data.currency || 'USD',
+      data.description,
+      data.category_id,
+      data.date,
+      data.notes || null,
+      receiptPath,
+      JSON.stringify(data.custom_fields || {}),
+      expenseId,
+      userId
+    );
+
+    // Update tags
+    db.prepare('DELETE FROM expense_tags WHERE expense_id = ?').run(expenseId);
+    
+    if (data.tags && data.tags.length > 0) {
+      for (const tagName of data.tags) {
+        let tag = db.prepare('SELECT id FROM tags WHERE name = ? AND user_id = ?').get(tagName, userId) as { id: number } | undefined;
+        
+        if (!tag) {
+          const tagResult = db.prepare('INSERT INTO tags (name, user_id) VALUES (?, ?)').run(tagName, userId);
+          tag = { id: tagResult.lastInsertRowid as number };
+        }
+
+        db.prepare('INSERT INTO expense_tags (expense_id, tag_id) VALUES (?, ?)').run(expenseId, tag.id);
+      }
+    }
+
+    const expense = db.prepare(`
+      SELECT e.*, c.name as category_name, c.color as category_color
+      FROM expenses e
+      LEFT JOIN categories c ON e.category_id = c.id
+      WHERE e.id = ?
+    `).get(expenseId);
+
+    const tags = db.prepare(`
+      SELECT t.name FROM tags t
+      JOIN expense_tags et ON t.id = et.tag_id
+      WHERE et.expense_id = ?
+    `).all(expenseId).map((t: any) => t.name);
+
+    res.json({
+      ...expense,
+      tags,
+      custom_fields: data.custom_fields
+    });
+  } catch (error) {
+    logger.error('Error updating expense:', error);
+    res.status(500).json({ error: 'Failed to update expense' });
   }
-);
+});
 
 // Delete expense
-router.delete('/:id',
-  authenticateToken,
-  invalidateCache(cacheKeys.expensesPattern('*')),
-  (req, res) => {
-    try {
-      const db = getDatabase();
-      
-      // Get expense to check ownership and get receipt path
-      const getStmt = db.prepare('SELECT * FROM expenses WHERE id = ? AND user_id = ?');
-      const expense = getStmt.get(req.params.id, req.user!.id) as any;
+router.delete('/:id', authenticate, async (req, res) => {
+  try {
+    const userId = req.user!.id;
+    const expenseId = parseInt(req.params.id);
 
-      if (!expense) {
-        return res.status(404).json({ error: 'Expense not found' });
-      }
+    const result = db.prepare('DELETE FROM expenses WHERE id = ? AND user_id = ?').run(expenseId, userId);
 
-      // Delete receipt file if exists
-      if (expense.receipt_path) {
-        const receiptPath = path.join(process.cwd(), expense.receipt_path);
-        if (fs.existsSync(receiptPath)) {
-          fs.unlinkSync(receiptPath);
-        }
-      }
-
-      // Delete expense (cascades to tags and custom fields)
-      const deleteStmt = db.prepare('DELETE FROM expenses WHERE id = ? AND user_id = ?');
-      deleteStmt.run(req.params.id, req.user!.id);
-
-      res.status(204).send();
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
+    if (result.changes === 0) {
+      return res.status(404).json({ error: 'Expense not found' });
     }
+
+    // Delete associated tags
+    db.prepare('DELETE FROM expense_tags WHERE expense_id = ?').run(expenseId);
+
+    res.status(204).send();
+  } catch (error) {
+    logger.error('Error deleting expense:', error);
+    res.status(500).json({ error: 'Failed to delete expense' });
   }
-);
-
-// Upload receipt
-router.post('/:id/receipt',
-  authenticateToken,
-  upload.single('receipt'),
-  invalidateCache(cacheKeys.expensesPattern('*')),
-  (req, res) => {
-    try {
-      if (!req.file) {
-        return res.status(400).json({ error: 'No file uploaded' });
-      }
-
-      const db = getDatabase();
-      
-      // Check if expense exists and belongs to user
-      const checkStmt = db.prepare('SELECT id, receipt_path FROM expenses WHERE id = ? AND user_id = ?');
-      const expense = checkStmt.get(req.params.id, req.user!.id) as any;
-
-      if (!expense) {
-        // Clean up uploaded file
-        fs.unlinkSync(req.file.path);
-        return res.status(404).json({ error: 'Expense not found' });
-      }
-
-      // Delete old receipt if exists
-      if (expense.receipt_path) {
-        const oldPath = path.join(process.cwd(), expense.receipt_path);
-        if (fs.existsSync(oldPath)) {
-          fs.unlinkSync(oldPath);
-        }
-      }
-
-      // Update expense with new receipt path
-      const receiptPath = req.file.path.replace(/\\/g, '/');
-      const updateStmt = db.prepare('UPDATE expenses SET receipt_path = ? WHERE id = ?');
-      updateStmt.run(receiptPath, req.params.id);
-
-      res.json({ receipt_path: receiptPath });
-    } catch (error: any) {
-      if (req.file) {
-        fs.unlinkSync(req.file.path);
-      }
-      res.status(500).json({ error: error.message });
-    }
-  }
-);
-
-// Delete receipt
-router.delete('/:id/receipt',
-  authenticateToken,
-  invalidateCache(cacheKeys.expensesPattern('*')),
-  (req, res) => {
-    try {
-      const db = getDatabase();
-      
-      const getStmt = db.prepare('SELECT receipt_path FROM expenses WHERE id = ? AND user_id = ?');
-      const expense = getStmt.get(req.params.id, req.user!.id) as any;
-
-      if (!expense) {
-        return res.status(404).json({ error: 'Expense not found' });
-      }
-
-      if (!expense.receipt_path) {
-        return res.status(404).json({ error: 'No receipt found' });
-      }
-
-      // Delete file
-      const receiptPath = path.join(process.cwd(), expense.receipt_path);
-      if (fs.existsSync(receiptPath)) {
-        fs.unlinkSync(receiptPath);
-      }
-
-      // Update database
-      const updateStmt = db.prepare('UPDATE expenses SET receipt_path = NULL WHERE id = ?');
-      updateStmt.run(req.params.id);
-
-      res.status(204).send();
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  }
-);
+});
 
 export default router;
