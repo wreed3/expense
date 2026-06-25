@@ -1,7 +1,7 @@
 import express from 'express';
 import { z } from 'zod';
-import { authenticateToken } from '../middleware/auth';
-import { getDb } from '../index';
+import { authenticateToken } from '../middleware/auth.js';
+import { getDatabase } from '../index.js';
 
 const router = express.Router();
 
@@ -15,7 +15,7 @@ const customFieldSchema = z.object({
 // Get all custom fields for user
 router.get('/', authenticateToken, (req, res) => {
   try {
-    const db = getDb();
+    const db = getDatabase();
     const fields = db.prepare(`
       SELECT * FROM custom_fields 
       WHERE user_id = ?
@@ -37,7 +37,7 @@ router.get('/', authenticateToken, (req, res) => {
 router.post('/', authenticateToken, (req, res) => {
   try {
     const validatedData = customFieldSchema.parse(req.body);
-    const db = getDb();
+    const db = getDatabase();
 
     const options = validatedData.options ? JSON.stringify(validatedData.options) : null;
 
@@ -75,7 +75,7 @@ router.put('/:id', authenticateToken, (req, res) => {
   try {
     const { id } = req.params;
     const validatedData = customFieldSchema.parse(req.body);
-    const db = getDb();
+    const db = getDatabase();
 
     const options = validatedData.options ? JSON.stringify(validatedData.options) : null;
 
@@ -115,7 +115,7 @@ router.put('/:id', authenticateToken, (req, res) => {
 router.delete('/:id', authenticateToken, (req, res) => {
   try {
     const { id } = req.params;
-    const db = getDb();
+    const db = getDatabase();
 
     const result = db.prepare(`
       DELETE FROM custom_fields WHERE id = ? AND user_id = ?

@@ -1,22 +1,14 @@
 import express from 'express';
 import { z } from 'zod';
-import { authenticateToken } from '../middleware/auth';
-import { getDb } from '../index';
+import { authenticateToken } from '../middleware/auth.js';
+import { getDatabase } from '../index.js';
 
 const router = express.Router();
-
-const currencySchema = z.object({
-  code: z.string().length(3).toUpperCase(),
-  name: z.string().min(1),
-  symbol: z.string().min(1),
-  exchange_rate: z.number().positive().default(1.0),
-  is_default: z.boolean().default(false),
-});
 
 // Get all currencies
 router.get('/', authenticateToken, (req, res) => {
   try {
-    const db = getDb();
+    const db = getDatabase();
     const currencies = db.prepare(`
       SELECT * FROM currencies ORDER BY is_default DESC, code ASC
     `).all();
@@ -31,7 +23,7 @@ router.get('/', authenticateToken, (req, res) => {
 // Get default currency
 router.get('/default', authenticateToken, (req, res) => {
   try {
-    const db = getDb();
+    const db = getDatabase();
     const currency = db.prepare(`
       SELECT * FROM currencies WHERE is_default = 1 LIMIT 1
     `).get();
@@ -57,7 +49,7 @@ router.put('/:code', authenticateToken, (req, res) => {
       return res.status(400).json({ error: 'Valid exchange rate required' });
     }
 
-    const db = getDb();
+    const db = getDatabase();
     const result = db.prepare(`
       UPDATE currencies 
       SET exchange_rate = ?, updated_at = datetime('now')
@@ -71,8 +63,8 @@ router.put('/:code', authenticateToken, (req, res) => {
     const currency = db.prepare('SELECT * FROM currencies WHERE code = ?').get(code);
     res.json(currency);
   } catch (error) {
-    console.error('Error updating currency:', error);
-    res.status(500).json({ error: 'Failed to update currency' });
+    console.error('Error updating exchange rate:', error);
+    res.status(500).json({ error: 'Failed to update exchange rate' });
   }
 });
 
@@ -80,34 +72,22 @@ router.put('/:code', authenticateToken, (req, res) => {
 router.post('/:code/set-default', authenticateToken, (req, res) => {
   try {
     const { code } = req.params;
-    const db = getDb();
+    const db = getDatabase();
 
-    // Start transaction
-    db.prepare('BEGIN TRANSACTION').run();
+    // Remove default from all currencies
+    db.prepare('UPDATE currencies SET is_default = 0').run();
 
-    try {
-      // Remove default from all currencies
-      db.prepare('UPDATE currencies SET is_default = 0').run();
+    // Set new default
+    const result = db.prepare(`
+      UPDATE currencies SET is_default = 1 WHERE code = ?
+    `).run(code);
 
-      // Set new default
-      const result = db.prepare(`
-        UPDATE currencies 
-        SET is_default = 1, updated_at = datetime('now')
-        WHERE code = ?
-      `).run(code);
-
-      if (result.changes === 0) {
-        throw new Error('Currency not found');
-      }
-
-      db.prepare('COMMIT').run();
-
-      const currency = db.prepare('SELECT * FROM currencies WHERE code = ?').get(code);
-      res.json(currency);
-    } catch (error) {
-      db.prepare('ROLLBACK').run();
-      throw error;
+    if (result.changes === 0) {
+      return res.status(404).json({ error: 'Currency not found' });
     }
+
+    const currency = db.prepare('SELECT * FROM currencies WHERE code = ?').get(code);
+    res.json(currency);
   } catch (error) {
     console.error('Error setting default currency:', error);
     res.status(500).json({ error: 'Failed to set default currency' });
@@ -123,7 +103,7 @@ router.post('/convert', authenticateToken, (req, res) => {
       return res.status(400).json({ error: 'Amount, from, and to currencies required' });
     }
 
-    const db = getDb();
+    const db = getDatabase();
     const fromCurrency = db.prepare('SELECT * FROM currencies WHERE code = ?').get(from);
     const toCurrency = db.prepare('SELECT * FROM currencies WHERE code = ?').get(to);
 
@@ -131,14 +111,14 @@ router.post('/convert', authenticateToken, (req, res) => {
       return res.status(404).json({ error: 'Currency not found' });
     }
 
-    // Convert through base currency (USD)
+    // Convert to base currency (USD), then to target currency
     const baseAmount = amount / (fromCurrency as any).exchange_rate;
     const convertedAmount = baseAmount * (toCurrency as any).exchange_rate;
 
     res.json({
       original_amount: amount,
       original_currency: from,
-      converted_amount: Math.round(convertedAmount * 100) / 100,
+      converted_amount: convertedAmount,
       target_currency: to,
       exchange_rate: (toCurrency as any).exchange_rate / (fromCurrency as any).exchange_rate,
     });

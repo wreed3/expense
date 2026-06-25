@@ -1,7 +1,7 @@
 import express from 'express';
 import { z } from 'zod';
-import { authenticateToken } from '../middleware/auth';
-import { getDb } from '../index';
+import { authenticateToken } from '../middleware/auth.js';
+import { getDatabase } from '../index.js';
 
 const router = express.Router();
 
@@ -13,7 +13,7 @@ const tagSchema = z.object({
 // Get all tags for user
 router.get('/', authenticateToken, (req, res) => {
   try {
-    const db = getDb();
+    const db = getDatabase();
     const tags = db.prepare(`
       SELECT t.*, COUNT(et.expense_id) as usage_count
       FROM tags t
@@ -34,7 +34,7 @@ router.get('/', authenticateToken, (req, res) => {
 router.post('/', authenticateToken, (req, res) => {
   try {
     const validatedData = tagSchema.parse(req.body);
-    const db = getDb();
+    const db = getDatabase();
 
     const result = db.prepare(`
       INSERT INTO tags (user_id, name, color)
@@ -60,7 +60,7 @@ router.put('/:id', authenticateToken, (req, res) => {
   try {
     const { id } = req.params;
     const validatedData = tagSchema.parse(req.body);
-    const db = getDb();
+    const db = getDatabase();
 
     const result = db.prepare(`
       UPDATE tags 
@@ -87,7 +87,7 @@ router.put('/:id', authenticateToken, (req, res) => {
 router.delete('/:id', authenticateToken, (req, res) => {
   try {
     const { id } = req.params;
-    const db = getDb();
+    const db = getDatabase();
 
     const result = db.prepare(`
       DELETE FROM tags WHERE id = ? AND user_id = ?
@@ -101,34 +101,6 @@ router.delete('/:id', authenticateToken, (req, res) => {
   } catch (error) {
     console.error('Error deleting tag:', error);
     res.status(500).json({ error: 'Failed to delete tag' });
-  }
-});
-
-// Get expenses by tag
-router.get('/:id/expenses', authenticateToken, (req, res) => {
-  try {
-    const { id } = req.params;
-    const db = getDb();
-
-    // Verify tag belongs to user
-    const tag = db.prepare('SELECT * FROM tags WHERE id = ? AND user_id = ?').get(id, req.user!.id);
-    if (!tag) {
-      return res.status(404).json({ error: 'Tag not found' });
-    }
-
-    const expenses = db.prepare(`
-      SELECT e.*, c.name as category_name, c.color as category_color
-      FROM expenses e
-      JOIN expense_tags et ON e.id = et.expense_id
-      JOIN categories c ON e.category_id = c.id
-      WHERE et.tag_id = ? AND e.user_id = ?
-      ORDER BY e.date DESC
-    `).all(id, req.user!.id);
-
-    res.json(expenses);
-  } catch (error) {
-    console.error('Error fetching expenses by tag:', error);
-    res.status(500).json({ error: 'Failed to fetch expenses' });
   }
 });
 
