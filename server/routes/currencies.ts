@@ -1,135 +1,150 @@
 import express from 'express';
-import { CurrencyService } from '../services/currency.service.js';
-import { authenticateToken } from '../middleware/auth.js';
-import { currencySchema, updateCurrencySchema, exchangeRateUpdateSchema } from '../types/currency.js';
-import { getDatabase } from '../index.js';
+import { z } from 'zod';
+import { authenticateToken } from '../middleware/auth';
+import { getDb } from '../index';
 
 const router = express.Router();
+
+const currencySchema = z.object({
+  code: z.string().length(3).toUpperCase(),
+  name: z.string().min(1),
+  symbol: z.string().min(1),
+  exchange_rate: z.number().positive().default(1.0),
+  is_default: z.boolean().default(false),
+});
 
 // Get all currencies
 router.get('/', authenticateToken, (req, res) => {
   try {
-    const db = getDatabase();
-    const currencyService = new CurrencyService(db);
-    const currencies = currencyService.getAllCurrencies();
+    const db = getDb();
+    const currencies = db.prepare(`
+      SELECT * FROM currencies ORDER BY is_default DESC, code ASC
+    `).all();
+
     res.json(currencies);
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
+  } catch (error) {
+    console.error('Error fetching currencies:', error);
+    res.status(500).json({ error: 'Failed to fetch currencies' });
   }
 });
 
-// Get currency by code
-router.get('/:code', authenticateToken, (req, res) => {
+// Get default currency
+router.get('/default', authenticateToken, (req, res) => {
   try {
-    const db = getDatabase();
-    const currencyService = new CurrencyService(db);
-    const currency = currencyService.getCurrencyByCode(req.params.code);
-    
+    const db = getDb();
+    const currency = db.prepare(`
+      SELECT * FROM currencies WHERE is_default = 1 LIMIT 1
+    `).get();
+
     if (!currency) {
-      return res.status(404).json({ error: 'Currency not found' });
+      return res.status(404).json({ error: 'No default currency found' });
     }
-    
+
     res.json(currency);
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
+  } catch (error) {
+    console.error('Error fetching default currency:', error);
+    res.status(500).json({ error: 'Failed to fetch default currency' });
   }
 });
 
-// Get base currency
-router.get('/base/current', authenticateToken, (req, res) => {
-  try {
-    const db = getDatabase();
-    const currencyService = new CurrencyService(db);
-    const currency = currencyService.getBaseCurrency();
-    res.json(currency);
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Create currency (admin only - for now just authenticated)
-router.post('/', authenticateToken, (req, res) => {
-  try {
-    const validatedData = currencySchema.parse(req.body);
-    const db = getDatabase();
-    const currencyService = new CurrencyService(db);
-    
-    const currency = currencyService.createCurrency(validatedData);
-    res.status(201).json(currency);
-  } catch (error: any) {
-    if (error.name === 'ZodError') {
-      return res.status(400).json({ error: 'Invalid currency data', details: error.errors });
-    }
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Update currency
+// Update currency exchange rate
 router.put('/:code', authenticateToken, (req, res) => {
   try {
-    const validatedData = updateCurrencySchema.parse(req.body);
-    const db = getDatabase();
-    const currencyService = new CurrencyService(db);
-    
-    const currency = currencyService.updateCurrency(req.params.code, validatedData);
-    res.json(currency);
-  } catch (error: any) {
-    if (error.name === 'ZodError') {
-      return res.status(400).json({ error: 'Invalid currency data', details: error.errors });
+    const { code } = req.params;
+    const { exchange_rate } = req.body;
+
+    if (!exchange_rate || exchange_rate <= 0) {
+      return res.status(400).json({ error: 'Valid exchange rate required' });
     }
-    res.status(500).json({ error: error.message });
-  }
-});
 
-// Update exchange rate
-router.patch('/:code/exchange-rate', authenticateToken, (req, res) => {
-  try {
-    const validatedData = exchangeRateUpdateSchema.parse({
-      code: req.params.code,
-      exchange_rate: req.body.exchange_rate,
-    });
-    
-    const db = getDatabase();
-    const currencyService = new CurrencyService(db);
-    const currency = currencyService.updateExchangeRate(validatedData);
-    
-    res.json(currency);
-  } catch (error: any) {
-    if (error.name === 'ZodError') {
-      return res.status(400).json({ error: 'Invalid exchange rate data', details: error.errors });
+    const db = getDb();
+    const result = db.prepare(`
+      UPDATE currencies 
+      SET exchange_rate = ?, updated_at = datetime('now')
+      WHERE code = ?
+    `).run(exchange_rate, code);
+
+    if (result.changes === 0) {
+      return res.status(404).json({ error: 'Currency not found' });
     }
-    res.status(500).json({ error: error.message });
+
+    const currency = db.prepare('SELECT * FROM currencies WHERE code = ?').get(code);
+    res.json(currency);
+  } catch (error) {
+    console.error('Error updating currency:', error);
+    res.status(500).json({ error: 'Failed to update currency' });
   }
 });
 
-// Delete currency
-router.delete('/:code', authenticateToken, (req, res) => {
+// Set default currency
+router.post('/:code/set-default', authenticateToken, (req, res) => {
   try {
-    const db = getDatabase();
-    const currencyService = new CurrencyService(db);
-    currencyService.deleteCurrency(req.params.code);
-    res.status(204).send();
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    const { code } = req.params;
+    const db = getDb();
+
+    // Start transaction
+    db.prepare('BEGIN TRANSACTION').run();
+
+    try {
+      // Remove default from all currencies
+      db.prepare('UPDATE currencies SET is_default = 0').run();
+
+      // Set new default
+      const result = db.prepare(`
+        UPDATE currencies 
+        SET is_default = 1, updated_at = datetime('now')
+        WHERE code = ?
+      `).run(code);
+
+      if (result.changes === 0) {
+        throw new Error('Currency not found');
+      }
+
+      db.prepare('COMMIT').run();
+
+      const currency = db.prepare('SELECT * FROM currencies WHERE code = ?').get(code);
+      res.json(currency);
+    } catch (error) {
+      db.prepare('ROLLBACK').run();
+      throw error;
+    }
+  } catch (error) {
+    console.error('Error setting default currency:', error);
+    res.status(500).json({ error: 'Failed to set default currency' });
   }
 });
 
-// Convert currency
+// Convert amount between currencies
 router.post('/convert', authenticateToken, (req, res) => {
   try {
     const { amount, from, to } = req.body;
-    
+
     if (!amount || !from || !to) {
-      return res.status(400).json({ error: 'Amount, from, and to are required' });
+      return res.status(400).json({ error: 'Amount, from, and to currencies required' });
     }
-    
-    const db = getDatabase();
-    const currencyService = new CurrencyService(db);
-    const conversion = currencyService.convertAmount(Number(amount), from, to);
-    
-    res.json(conversion);
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
+
+    const db = getDb();
+    const fromCurrency = db.prepare('SELECT * FROM currencies WHERE code = ?').get(from);
+    const toCurrency = db.prepare('SELECT * FROM currencies WHERE code = ?').get(to);
+
+    if (!fromCurrency || !toCurrency) {
+      return res.status(404).json({ error: 'Currency not found' });
+    }
+
+    // Convert through base currency (USD)
+    const baseAmount = amount / (fromCurrency as any).exchange_rate;
+    const convertedAmount = baseAmount * (toCurrency as any).exchange_rate;
+
+    res.json({
+      original_amount: amount,
+      original_currency: from,
+      converted_amount: Math.round(convertedAmount * 100) / 100,
+      target_currency: to,
+      exchange_rate: (toCurrency as any).exchange_rate / (fromCurrency as any).exchange_rate,
+    });
+  } catch (error) {
+    console.error('Error converting currency:', error);
+    res.status(500).json({ error: 'Failed to convert currency' });
   }
 });
 

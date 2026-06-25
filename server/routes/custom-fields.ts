@@ -1,122 +1,134 @@
 import express from 'express';
-import { CustomFieldsService } from '../services/custom-fields.service.js';
-import { authenticateToken } from '../middleware/auth.js';
-import { createCustomFieldSchema, updateCustomFieldSchema } from '../types/custom-fields.js';
-import { getDatabase } from '../index.js';
+import { z } from 'zod';
+import { authenticateToken } from '../middleware/auth';
+import { getDb } from '../index';
 
 const router = express.Router();
+
+const customFieldSchema = z.object({
+  name: z.string().min(1).max(100),
+  field_type: z.enum(['text', 'number', 'date', 'boolean', 'select']),
+  options: z.string().optional(),
+  is_required: z.boolean().default(false),
+});
 
 // Get all custom fields for user
 router.get('/', authenticateToken, (req, res) => {
   try {
-    const db = getDatabase();
-    const customFieldsService = new CustomFieldsService(db);
-    const fields = customFieldsService.getAllCustomFields(req.user!.id);
-    res.json(fields);
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
-  }
-});
+    const db = getDb();
+    const fields = db.prepare(`
+      SELECT * FROM custom_fields 
+      WHERE user_id = ?
+      ORDER BY created_at ASC
+    `).all(req.user!.id);
 
-// Get custom field by ID
-router.get('/:id', authenticateToken, (req, res) => {
-  try {
-    const db = getDatabase();
-    const customFieldsService = new CustomFieldsService(db);
-    const field = customFieldsService.getCustomFieldById(Number(req.params.id), req.user!.id);
-    
-    if (!field) {
-      return res.status(404).json({ error: 'Custom field not found' });
-    }
-    
-    res.json(field);
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    res.json(fields.map(field => ({
+      ...field,
+      options: (field as any).options ? JSON.parse((field as any).options) : null,
+      is_required: Boolean((field as any).is_required),
+    })));
+  } catch (error) {
+    console.error('Error fetching custom fields:', error);
+    res.status(500).json({ error: 'Failed to fetch custom fields' });
   }
 });
 
 // Create custom field
 router.post('/', authenticateToken, (req, res) => {
   try {
-    const validatedData = createCustomFieldSchema.parse(req.body);
-    const db = getDatabase();
-    const customFieldsService = new CustomFieldsService(db);
-    
-    const field = customFieldsService.createCustomField(req.user!.id, validatedData);
-    res.status(201).json(field);
-  } catch (error: any) {
-    if (error.name === 'ZodError') {
+    const validatedData = customFieldSchema.parse(req.body);
+    const db = getDb();
+
+    const options = validatedData.options ? JSON.stringify(validatedData.options) : null;
+
+    const result = db.prepare(`
+      INSERT INTO custom_fields (user_id, name, field_type, options, is_required)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(
+      req.user!.id,
+      validatedData.name,
+      validatedData.field_type,
+      options,
+      validatedData.is_required ? 1 : 0
+    );
+
+    const field = db.prepare('SELECT * FROM custom_fields WHERE id = ?').get(result.lastInsertRowid);
+    res.status(201).json({
+      ...field,
+      options: (field as any).options ? JSON.parse((field as any).options) : null,
+      is_required: Boolean((field as any).is_required),
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
       return res.status(400).json({ error: 'Invalid custom field data', details: error.errors });
     }
-    if (error.message.includes('UNIQUE constraint')) {
-      return res.status(409).json({ error: 'Custom field with this name already exists' });
+    if ((error as any).code === 'SQLITE_CONSTRAINT') {
+      return res.status(400).json({ error: 'Custom field name already exists' });
     }
-    res.status(500).json({ error: error.message });
+    console.error('Error creating custom field:', error);
+    res.status(500).json({ error: 'Failed to create custom field' });
   }
 });
 
 // Update custom field
 router.put('/:id', authenticateToken, (req, res) => {
   try {
-    const validatedData = updateCustomFieldSchema.parse(req.body);
-    const db = getDatabase();
-    const customFieldsService = new CustomFieldsService(db);
-    
-    const field = customFieldsService.updateCustomField(Number(req.params.id), req.user!.id, validatedData);
-    res.json(field);
-  } catch (error: any) {
-    if (error.name === 'ZodError') {
-      return res.status(400).json({ error: 'Invalid custom field data', details: error.errors });
-    }
-    if (error.message === 'Custom field not found') {
+    const { id } = req.params;
+    const validatedData = customFieldSchema.parse(req.body);
+    const db = getDb();
+
+    const options = validatedData.options ? JSON.stringify(validatedData.options) : null;
+
+    const result = db.prepare(`
+      UPDATE custom_fields 
+      SET name = ?, field_type = ?, options = ?, is_required = ?
+      WHERE id = ? AND user_id = ?
+    `).run(
+      validatedData.name,
+      validatedData.field_type,
+      options,
+      validatedData.is_required ? 1 : 0,
+      id,
+      req.user!.id
+    );
+
+    if (result.changes === 0) {
       return res.status(404).json({ error: 'Custom field not found' });
     }
-    res.status(500).json({ error: error.message });
+
+    const field = db.prepare('SELECT * FROM custom_fields WHERE id = ?').get(id);
+    res.json({
+      ...field,
+      options: (field as any).options ? JSON.parse((field as any).options) : null,
+      is_required: Boolean((field as any).is_required),
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: 'Invalid custom field data', details: error.errors });
+    }
+    console.error('Error updating custom field:', error);
+    res.status(500).json({ error: 'Failed to update custom field' });
   }
 });
 
 // Delete custom field
 router.delete('/:id', authenticateToken, (req, res) => {
   try {
-    const db = getDatabase();
-    const customFieldsService = new CustomFieldsService(db);
-    customFieldsService.deleteCustomField(Number(req.params.id), req.user!.id);
-    res.status(204).send();
-  } catch (error: any) {
-    if (error.message === 'Custom field not found') {
+    const { id } = req.params;
+    const db = getDb();
+
+    const result = db.prepare(`
+      DELETE FROM custom_fields WHERE id = ? AND user_id = ?
+    `).run(id, req.user!.id);
+
+    if (result.changes === 0) {
       return res.status(404).json({ error: 'Custom field not found' });
     }
-    res.status(500).json({ error: error.message });
-  }
-});
 
-// Get custom fields for an expense
-router.get('/expense/:expenseId', authenticateToken, (req, res) => {
-  try {
-    const db = getDatabase();
-    const customFieldsService = new CustomFieldsService(db);
-    const fields = customFieldsService.getCustomFieldsByExpenseId(Number(req.params.expenseId), req.user!.id);
-    res.json(fields);
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Set custom field values for an expense
-router.put('/expense/:expenseId/values', authenticateToken, (req, res) => {
-  try {
-    const { values } = req.body;
-    
-    if (!Array.isArray(values)) {
-      return res.status(400).json({ error: 'Values must be an array' });
-    }
-    
-    const db = getDatabase();
-    const customFieldsService = new CustomFieldsService(db);
-    customFieldsService.setCustomFieldValues(Number(req.params.expenseId), values);
-    res.status(204).send();
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    res.json({ message: 'Custom field deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting custom field:', error);
+    res.status(500).json({ error: 'Failed to delete custom field' });
   }
 });
 
