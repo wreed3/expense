@@ -9,15 +9,16 @@ interface AuthRequest extends Request {
   };
 }
 
-export const auditLog = async (req: AuthRequest, res: Response, next: NextFunction) => {
+export const auditLog = async (req: Request, res: Response, next: NextFunction) => {
   const startTime = Date.now();
+  const authReq = req as AuthRequest;
 
   // Log the request
   const logEntry = {
     timestamp: new Date().toISOString(),
     method: req.method,
     path: req.path,
-    userId: req.user?.id || null,
+    userId: authReq.user?.id || null,
     ip: req.ip,
     userAgent: req.get('user-agent'),
   };
@@ -36,7 +37,7 @@ export const auditLog = async (req: AuthRequest, res: Response, next: NextFuncti
     });
 
     // Store audit log in database for important operations
-    if (['POST', 'PUT', 'DELETE'].includes(req.method) && req.user) {
+    if (['POST', 'PUT', 'DELETE'].includes(req.method) && authReq.user) {
       const action = `${req.method} ${req.path}`;
       const details = JSON.stringify({
         body: req.body,
@@ -47,7 +48,7 @@ export const auditLog = async (req: AuthRequest, res: Response, next: NextFuncti
       run(
         `INSERT INTO audit_logs (user_id, action, details, ip_address, created_at)
          VALUES (?, ?, ?, ?, datetime('now'))`,
-        [req.user.id, action, details, req.ip]
+        [authReq.user.id, action, details, req.ip]
       ).catch((error: Error) => {
         logger.error('Failed to save audit log', { error: error.message });
       });

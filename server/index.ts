@@ -3,9 +3,6 @@ import cors from 'cors';
 import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
 import dotenv from 'dotenv';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import { dirname } from 'path';
 
 // Load environment variables
 dotenv.config();
@@ -13,7 +10,7 @@ dotenv.config();
 // Import routes
 import authRoutes from './routes/auth.js';
 import expenseRoutes from './routes/expenses.js';
-import categoryRoutes from './routes/categories.js';
+import { categoryRoutes } from './routes/categories.js';
 import budgetRoutes from './routes/budgets.js';
 import analyticsRoutes from './routes/analytics.js';
 import exportRoutes from './routes/export.js';
@@ -71,19 +68,7 @@ app.use((_req, res) => {
   res.status(404).json({ error: 'Not found' });
 });
 
-// Start server
 app.listen(PORT, () => {
   logger.info(`Server running on port ${PORT}`);
-  logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
-});
-
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  logger.info('SIGTERM signal received: closing HTTP server');
-  process.exit(0);
-});
-
-process.on('SIGINT', () => {
-  logger.info('SIGINT signal received: closing HTTP server');
-  process.exit(0);
+  console.log(`Server running on http://localhost:${PORT}`);
 });
