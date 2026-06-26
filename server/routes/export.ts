@@ -1,126 +1,165 @@
-import express from 'express';
-import { getDatabase } from '../database/index.js';
-import { asyncHandler } from '../middleware/errorHandler.js';
-import { authenticate, AuthRequest } from '../middleware/auth.js';
+import express, { Response } from 'express';
+import { query } from '../utils/db.js';
+import { authenticateToken } from '../middleware/auth.js';
+import logger from '../utils/logger.js';
+import type { AuthRequest, ExpenseWithCategory, ExpenseQueryParams } from '../types/index.js';
 
 const router = express.Router();
 
 // Export to CSV
-router.get(
-  '/csv',
-  authenticate,
-  asyncHandler(async (req: AuthRequest, res) => {
-    const db = getDatabase();
-    const { startDate, endDate } = req.query;
+router.get('/csv', authenticateToken, async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: 'Not authenticated' });
+      return;
+    }
 
-    let query = `
-      SELECT 
-        e.date,
-        e.description,
-        e.amount,
-        c.name as category,
-        e.is_recurring,
-        e.recurring_frequency
+    const { category_id, start_date, end_date } = req.query as ExpenseQueryParams;
+
+    let sql = `
+      SELECT e.date, e.description, e.amount, c.name as category_name
       FROM expenses e
       JOIN categories c ON e.category_id = c.id
       WHERE e.user_id = ?
     `;
-    const params: any[] = [req.userId!];
+    const params: any[] = [req.user.id];
 
-    if (startDate) {
-      query += ' AND e.date >= ?';
-      params.push(startDate);
+    if (category_id) {
+      sql += ' AND e.category_id = ?';
+      params.push(parseInt(category_id));
     }
 
-    if (endDate) {
-      query += ' AND e.date <= ?';
-      params.push(endDate);
+    if (start_date) {
+      sql += ' AND e.date >= ?';
+      params.push(start_date);
     }
 
-    query += ' ORDER BY e.date DESC';
+    if (end_date) {
+      sql += ' AND e.date <= ?';
+      params.push(end_date);
+    }
 
-    const expenses = db.prepare(query).all(...params) as any[];
+    sql += ' ORDER BY e.date DESC';
+
+    const expenses = await query<ExpenseWithCategory>(sql, params);
 
     // Generate CSV
-    const headers = ['Date', 'Description', 'Amount', 'Category', 'Recurring', 'Frequency'];
-    const csvRows = [headers.join(',')];
+    const csvHeader = 'Date,Description,Amount,Category\n';
+    const csvRows = expenses
+      .map(
+        (expense) =>
+          `${expense.date},"${expense.description}",${expense.amount},"${expense.category_name}"`
+      )
+      .join('\n');
 
-    for (const expense of expenses) {
-      const row = [
-        expense.date,
-        `"${expense.description.replace(/"/g, '""')}"`,
-        expense.amount,
-        `"${expense.category}"`,
-        expense.is_recurring ? 'Yes' : 'No',
-        expense.recurring_frequency || 'N/A',
-      ];
-      csvRows.push(row.join(','));
-    }
-
-    const csv = csvRows.join('\n');
+    const csv = csvHeader + csvRows;
 
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', 'attachment; filename=expenses.csv');
     res.send(csv);
-  })
-);
 
-// Generate PDF report (simplified - would need jsPDF on server or use a PDF library)
-router.get(
-  '/pdf',
-  authenticate,
-  asyncHandler(async (req: AuthRequest, res) => {
-    const db = getDatabase();
-    const { startDate, endDate } = req.query;
+    logger.info('CSV export completed:', { userId: req.user.id, count: expenses.length });
+  } catch (error) {
+    logger.error('CSV export error:', error);
+    res.status(500).json({ message: 'Error exporting to CSV' });
+  }
+});
 
-    let query = `
-      SELECT 
-        e.*,
-        c.name as category_name,
-        c.color as category_color
+// Export to PDF (simplified - would use a PDF library in production)
+router.get('/pdf', authenticateToken, async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: 'Not authenticated' });
+      return;
+    }
+
+    const { category_id, start_date, end_date } = req.query as ExpenseQueryParams;
+
+    let sql = `
+      SELECT e.date, e.description, e.amount, c.name as category_name
       FROM expenses e
       JOIN categories c ON e.category_id = c.id
       WHERE e.user_id = ?
     `;
-    const params: any[] = [req.userId!];
+    const params: any[] = [req.user.id];
 
-    if (startDate) {
-      query += ' AND e.date >= ?';
-      params.push(startDate);
+    if (category_id) {
+      sql += ' AND e.category_id = ?';
+      params.push(parseInt(category_id));
     }
 
-    if (endDate) {
-      query += ' AND e.date <= ?';
-      params.push(endDate);
+    if (start_date) {
+      sql += ' AND e.date >= ?';
+      params.push(start_date);
     }
 
-    query += ' ORDER BY e.date DESC';
+    if (end_date) {
+      sql += ' AND e.date <= ?';
+      params.push(end_date);
+    }
 
-    const expenses = db.prepare(query).all(...params);
+    sql += ' ORDER BY e.date DESC';
 
-    // Get summary
-    const summary = db
-      .prepare(
-        `
-      SELECT 
-        COUNT(*) as total_expenses,
-        COALESCE(SUM(amount), 0) as total_amount
-      FROM expenses
-      WHERE user_id = ? ${startDate ? 'AND date >= ?' : ''} ${endDate ? 'AND date <= ?' : ''}
-    `
-      )
-      .get(...params);
+    const expenses = await query<ExpenseWithCategory>(sql, params);
 
-    // For now, return JSON data that frontend can use to generate PDF
-    res.json({
-      expenses,
-      summary,
-      dateRange: {
-        start: startDate || 'All time',
-        end: endDate || 'Present',
-      },
-    });
-  })
-);
+    // Calculate totals
+    const total = expenses.reduce((sum, expense) => sum + expense.amount, 0);
+
+    // Generate simple HTML that can be converted to PDF client-side
+    const html = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Expense Report</title>
+          <style>
+            body { font-family: Arial, sans-serif; margin: 20px; }
+            h1 { color: #333; }
+            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+            th, td { padding: 10px; text-align: left; border-bottom: 1px solid #ddd; }
+            th { background-color: #f5f5f5; font-weight: bold; }
+            .total { font-weight: bold; font-size: 1.2em; margin-top: 20px; }
+          </style>
+        </head>
+        <body>
+          <h1>Expense Report</h1>
+          <p>Generated: ${new Date().toLocaleDateString()}</p>
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Description</th>
+                <th>Category</th>
+                <th>Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${expenses
+                .map(
+                  (expense) => `
+                <tr>
+                  <td>${expense.date}</td>
+                  <td>${expense.description}</td>
+                  <td>${expense.category_name}</td>
+                  <td>$${expense.amount.toFixed(2)}</td>
+                </tr>
+              `
+                )
+                .join('')}
+            </tbody>
+          </table>
+          <div class="total">Total: $${total.toFixed(2)}</div>
+        </body>
+      </html>
+    `;
+
+    res.setHeader('Content-Type', 'text/html');
+    res.send(html);
+
+    logger.info('PDF export completed:', { userId: req.user.id, count: expenses.length });
+  } catch (error) {
+    logger.error('PDF export error:', error);
+    res.status(500).json({ message: 'Error exporting to PDF' });
+  }
+});
 
 export default router;
