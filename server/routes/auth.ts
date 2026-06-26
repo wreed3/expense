@@ -2,148 +2,142 @@ import express, { Response } from 'express';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
-import { query, get } from '../utils/db.js';
-import { validateRequest } from '../middleware/validateRequest.js';
-import { authenticateToken } from '../middleware/auth.js';
-import logger from '../utils/logger.js';
-import type { AuthRequest, User, RegisterBody, LoginBody, JwtPayload } from '../types/index.js';
+import { getDatabase } from '../utils/db';
+import { authenticateToken, AuthRequest } from '../middleware/auth';
+import Database from 'better-sqlite3';
+import { Pool } from 'pg';
 
 const router = express.Router();
-
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
+const DB_TYPE = process.env.DB_TYPE || 'sqlite';
 
 // Validation schemas
 const registerSchema = z.object({
-  email: z.string().email('Invalid email address'),
-  password: z.string().min(6, 'Password must be at least 6 characters'),
-  name: z.string().min(1, 'Name is required'),
+  email: z.string().email('Invalid email format'),
+  password: z.string().min(8, 'Password must be at least 8 characters'),
+  name: z.string().optional(),
 });
 
 const loginSchema = z.object({
-  email: z.string().email('Invalid email address'),
+  email: z.string().email('Invalid email format'),
   password: z.string().min(1, 'Password is required'),
 });
 
-// Register
-router.post('/register', validateRequest(registerSchema), async (req: AuthRequest, res: Response): Promise<void> => {
+// Register endpoint
+router.post('/register', async (req, res, next) => {
   try {
-    const { email, password, name } = req.body as RegisterBody;
-
-    // Check if user exists
-    const existingUser = await get<User>(
-      'SELECT * FROM users WHERE email = ?',
-      [email]
-    );
-
-    if (existingUser) {
-      res.status(400).json({ message: 'User already exists' });
-      return;
-    }
-
-    // Hash password
+    const { email, password, name } = registerSchema.parse(req.body);
+    
     const hashedPassword = await bcrypt.hash(password, 10);
-
-    // Create user
-    const result = await query<User>(
-      'INSERT INTO users (email, password, name) VALUES (?, ?, ?) RETURNING *',
-      [email, hashedPassword, name]
-    );
-
-    const user = result[0];
-
-    // Generate token
+    const db = getDatabase();
+    
+    let userId: number;
+    
+    if (DB_TYPE === 'postgres') {
+      const pool = db as Pool;
+      const result = await pool.query(
+        'INSERT INTO users (email, password, name) VALUES ($1, $2, $3) RETURNING id',
+        [email, hashedPassword, name || null]
+      );
+      userId = result.rows[0].id;
+    } else {
+      const sqlite = db as Database.Database;
+      const result = sqlite.prepare(
+        'INSERT INTO users (email, password, name) VALUES (?, ?, ?)'
+      ).run(email, hashedPassword, name || null);
+      userId = result.lastInsertRowid as number;
+    }
+    
     const token = jwt.sign(
-      { userId: user.id, email: user.email } as JwtPayload,
-      JWT_SECRET,
-      { expiresIn: JWT_EXPIRES_IN }
+      { userId, email, name },
+      process.env.JWT_SECRET!,
+      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
     );
-
-    logger.info('User registered:', { userId: user.id, email: user.email });
-
+    
     res.status(201).json({
       token,
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-      },
+      user: { id: userId, email, name },
     });
   } catch (error) {
-    logger.error('Registration error:', error);
-    res.status(500).json({ message: 'Error creating user' });
+    next(error);
   }
 });
 
-// Login
-router.post('/login', validateRequest(loginSchema), async (req: AuthRequest, res: Response): Promise<void> => {
+// Login endpoint
+router.post('/login', async (req, res, next) => {
   try {
-    const { email, password } = req.body as LoginBody;
-
-    // Find user
-    const user = await get<User>(
-      'SELECT * FROM users WHERE email = ?',
-      [email]
-    );
-
+    const { email, password } = loginSchema.parse(req.body);
+    
+    const db = getDatabase();
+    let user: any;
+    
+    if (DB_TYPE === 'postgres') {
+      const pool = db as Pool;
+      const result = await pool.query(
+        'SELECT * FROM users WHERE email = $1',
+        [email]
+      );
+      user = result.rows[0];
+    } else {
+      const sqlite = db as Database.Database;
+      user = sqlite.prepare('SELECT * FROM users WHERE email = ?').get(email);
+    }
+    
     if (!user) {
-      res.status(401).json({ message: 'Invalid credentials' });
-      return;
+      return res.status(401).json({ error: 'Invalid credentials', code: 'INVALID_CREDENTIALS' });
     }
-
-    // Verify password
-    const validPassword = await bcrypt.compare(password, user.password);
-
-    if (!validPassword) {
-      res.status(401).json({ message: 'Invalid credentials' });
-      return;
+    
+    const isValidPassword = await bcrypt.compare(password, user.password);
+    
+    if (!isValidPassword) {
+      return res.status(401).json({ error: 'Invalid credentials', code: 'INVALID_CREDENTIALS' });
     }
-
-    // Generate token
+    
     const token = jwt.sign(
-      { userId: user.id, email: user.email } as JwtPayload,
-      JWT_SECRET,
-      { expiresIn: JWT_EXPIRES_IN }
+      { userId: user.id, email: user.email, name: user.name },
+      process.env.JWT_SECRET!,
+      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
     );
-
-    logger.info('User logged in:', { userId: user.id, email: user.email });
-
+    
     res.json({
       token,
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
+      user: { 
+        id: user.id, 
+        email: user.email, 
+        name: user.name 
       },
     });
   } catch (error) {
-    logger.error('Login error:', error);
-    res.status(500).json({ message: 'Error logging in' });
+    next(error);
   }
 });
 
-// Get current user
-router.get('/me', authenticateToken, async (req: AuthRequest, res: Response): Promise<void> => {
+// Get current user endpoint
+router.get('/me', authenticateToken, async (req: AuthRequest, res: Response, next) => {
   try {
-    if (!req.user) {
-      res.status(401).json({ message: 'Not authenticated' });
-      return;
+    const db = getDatabase();
+    let user: any;
+    
+    if (DB_TYPE === 'postgres') {
+      const pool = db as Pool;
+      const result = await pool.query(
+        'SELECT id, email, name, created_at FROM users WHERE id = $1',
+        [req.userId]
+      );
+      user = result.rows[0];
+    } else {
+      const sqlite = db as Database.Database;
+      user = sqlite.prepare(
+        'SELECT id, email, name, created_at FROM users WHERE id = ?'
+      ).get(req.userId);
     }
-
-    const user = await get<User>(
-      'SELECT id, email, name, created_at FROM users WHERE id = ?',
-      [req.user.id]
-    );
-
+    
     if (!user) {
-      res.status(404).json({ message: 'User not found' });
-      return;
+      return res.status(404).json({ error: 'User not found', code: 'USER_NOT_FOUND' });
     }
-
-    res.json(user);
+    
+    res.json({ user });
   } catch (error) {
-    logger.error('Get user error:', error);
-    res.status(500).json({ message: 'Error fetching user' });
+    next(error);
   }
 });
 

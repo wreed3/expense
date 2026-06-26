@@ -1,26 +1,21 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "module": "CommonJS",
-    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "target": "ES2022",
+    "lib": ["ES2022"],
     "outDir": "./dist/server",
     "rootDir": "./server",
-    "noEmit": false,
-    "moduleResolution": "node",
-    "esModuleInterop": true,
+    "types": ["node"],
     "allowSyntheticDefaultImports": true,
-    "strict": true,
+    "esModuleInterop": true,
     "skipLibCheck": true,
-    "resolveJsonModule": true
+    "strict": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": false
   },
-  "include": ["server/**/*.ts"],
-  "exclude": [
-    "node_modules",
-    "dist",
-    "**/*.test.ts",
-    "**/*.spec.ts",
-    "**/__tests__/**",
-    "server/**/__tests__/**",
-    "server/**/*.test.ts"
-  ]
+  "include": ["server/**/*"],
+  "exclude": ["node_modules", "dist", "src"]
 }
