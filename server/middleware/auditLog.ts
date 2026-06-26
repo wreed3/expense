@@ -1,60 +1,35 @@
 import { Request, Response, NextFunction } from 'express';
-import { run } from '../database.js';
-import { logger } from '../utils/logger.js';
+import { getDatabase } from '../database/index.js';
+import logger from '../utils/logger.js';
 
-export const auditLog = async (req: Request, res: Response, next: NextFunction) => {
-  const startTime = Date.now();
-  const authReq = req as Request & {
-    user?: {
-      id: number;
-      email: string;
-      name?: string;
-    };
-  };
-
-  // Log the request
-  const logEntry = {
-    timestamp: new Date().toISOString(),
-    method: req.method,
-    path: req.path,
-    userId: authReq.user?.id || null,
-    ip: req.ip,
-    userAgent: req.get('user-agent'),
-  };
-
-  logger.info('API Request', logEntry);
-
-  // Capture response
-  const originalSend = res.send;
-  res.send = function (data: any) {
-    const duration = Date.now() - startTime;
-    
-    logger.info('API Response', {
-      ...logEntry,
-      statusCode: res.statusCode,
-      duration: `${duration}ms`,
+export function auditLog(req: Request, _res: Response, next: NextFunction) {
+  try {
+    const db = getDatabase();
+    const userId = (req as any).user?.id;
+    const action = `${req.method} ${req.path}`;
+    const details = JSON.stringify({
+      body: req.body,
+      params: req.params,
+      query: req.query,
     });
 
-    // Store audit log in database for important operations
-    if (['POST', 'PUT', 'DELETE'].includes(req.method) && authReq.user) {
-      const action = `${req.method} ${req.path}`;
-      const details = JSON.stringify({
-        body: req.body,
-        params: req.params,
-        query: req.query,
-      });
+    const stmt = db.prepare(`
+      INSERT INTO audit_logs (user_id, action, details, ip_address, user_agent)
+      VALUES (?, ?, ?, ?, ?)
+    `);
 
-      run(
-        `INSERT INTO audit_logs (user_id, action, details, ip_address, created_at)
-         VALUES (?, ?, ?, ?, datetime('now'))`,
-        [authReq.user.id, action, details, req.ip]
-      ).catch((error: Error) => {
-        logger.error('Failed to save audit log', { error: error.message });
-      });
-    }
+    stmt.run(
+      userId || null,
+      action,
+      details,
+      req.ip,
+      req.get('user-agent') || null
+    );
 
-    return originalSend.call(this, data);
-  };
+    logger.info(`Audit log: ${action} by user ${userId || 'anonymous'}`);
+  } catch (error) {
+    logger.error('Failed to create audit log:', error);
+  }
 
   next();
-};
+}
