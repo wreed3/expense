@@ -2,16 +2,15 @@ import { Request, Response, NextFunction } from 'express';
 import { run } from '../database.js';
 import { logger } from '../utils/logger.js';
 
-interface AuthRequest extends Request {
-  user?: {
-    id: number;
-    email: string;
-  };
-}
-
 export const auditLog = async (req: Request, res: Response, next: NextFunction) => {
   const startTime = Date.now();
-  const authReq = req as AuthRequest;
+  const authReq = req as Request & {
+    user?: {
+      id: number;
+      email: string;
+      name?: string;
+    };
+  };
 
   // Log the request
   const logEntry = {

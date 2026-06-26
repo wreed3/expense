@@ -6,41 +6,41 @@ export interface PaginationParams {
   offset: number;
 }
 
-export interface PaginationMeta {
-  page: number;
-  limit: number;
-  total: number;
-  totalPages: number;
-  hasNext: boolean;
-  hasPrev: boolean;
-}
+export const pagination = (defaultLimit = 50, maxLimit = 100) => {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const limit = Math.min(
+      maxLimit,
+      Math.max(1, parseInt(req.query.limit as string) || defaultLimit)
+    );
+    const offset = (page - 1) * limit;
 
-export function paginationMiddleware(req: Request, res: Response, next: NextFunction) {
-  const page = Math.max(1, parseInt(req.query.page as string) || 1);
-  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 50));
-  const offset = (page - 1) * limit;
+    // Attach pagination params to request
+    (req as Request & { pagination: PaginationParams }).pagination = {
+      page,
+      limit,
+      offset,
+    };
 
-  (req as any).pagination = {
-    page,
-    limit,
-    offset,
-  } as PaginationParams;
-
-  next();
-}
-
-export function createPaginationMeta(
-  total: number,
-  pagination: PaginationParams
-): PaginationMeta {
-  const totalPages = Math.ceil(total / pagination.limit);
-
-  return {
-    page: pagination.page,
-    limit: pagination.limit,
-    total,
-    totalPages,
-    hasNext: pagination.page < totalPages,
-    hasPrev: pagination.page > 1,
+    next();
   };
-}
+};
+
+export const paginatedResponse = (data: any[], total: number, _req: Request, res: Response) => {
+  const reqWithPagination = _req as Request & { pagination?: PaginationParams };
+  const page = reqWithPagination.pagination?.page || 1;
+  const limit = reqWithPagination.pagination?.limit || 50;
+  const totalPages = Math.ceil(total / limit);
+
+  res.json({
+    data,
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages,
+      hasNext: page < totalPages,
+      hasPrev: page > 1,
+    },
+  });
+};
