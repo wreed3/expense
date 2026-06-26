@@ -1,151 +1,104 @@
 import Database from 'better-sqlite3';
-import pkg from 'pg';
-const { Pool } = pkg;
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
-import { config } from './config.js';
-import { logger } from './logger.js';
+import { Pool } from 'pg';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+const DB_TYPE = (process.env.DB_TYPE || 'sqlite') as 'sqlite' | 'postgres';
 
-export interface User {
-  id: number;
-  email: string;
-  password: string;
-  name: string;
-  created_at: string;
-  theme: string;
+let db: Database.Database | Pool;
+
+if (DB_TYPE === 'postgres') {
+  const pool = new Pool({
+    host: process.env.DB_HOST || 'localhost',
+    port: parseInt(process.env.DB_PORT || '5432'),
+    database: process.env.DB_NAME || 'expense_tracker',
+    user: process.env.DB_USER || 'postgres',
+    password: process.env.DB_PASSWORD,
+  });
+
+  db = pool;
+} else {
+  const sqlite = new Database(process.env.DB_PATH || './expenses.db');
+  sqlite.pragma('journal_mode = WAL');
+  db = sqlite;
 }
 
-export interface Expense {
-  id: number;
-  user_id: number;
-  description: string;
-  amount: number;
-  category_id: number;
-  date: string;
-  created_at: string;
-  receipt_path?: string;
-  notes?: string;
-}
+export const getDb = () => db;
 
-export interface Category {
-  id: number;
-  user_id: number | null;
-  name: string;
-  color: string;
-  icon: string;
-}
-
-export interface Budget {
-  id: number;
-  user_id: number;
-  category_id: number;
-  amount: number;
-  period: 'monthly' | 'yearly';
-  start_date: string;
-  alert_threshold: number;
-}
-
-export interface Tag {
-  id: number;
-  user_id: number;
-  name: string;
-  color: string;
-}
-
-export interface ExpenseTag {
-  expense_id: number;
-  tag_id: number;
-}
-
-export interface RecurringExpense {
-  id: number;
-  user_id: number;
-  description: string;
-  amount: number;
-  category_id: number;
-  frequency: 'daily' | 'weekly' | 'monthly' | 'yearly';
-  start_date: string;
-  end_date?: string;
-  last_created: string;
-  is_active: boolean;
-}
-
-class DatabaseManager {
-  private static instance: DatabaseManager;
-  private db: Database.Database | null = null;
-  private pool: pkg.Pool | null = null;
-  private dbType: 'sqlite' | 'postgres';
-
-  private constructor() {
-    this.dbType = config.dbType;
-    this.initialize();
+export const query = async (sql: string, params: any[] = []): Promise<any[]> => {
+  if (DB_TYPE === 'postgres') {
+    const pool = db as Pool;
+    const result = await pool.query(sql, params);
+    return result.rows;
+  } else {
+    const sqlite = db as Database.Database;
+    return sqlite.prepare(sql).all(...params);
   }
+};
 
-  static getInstance(): DatabaseManager {
-    if (!DatabaseManager.instance) {
-      DatabaseManager.instance = new DatabaseManager();
+export const run = async (sql: string, params: any[] = []): Promise<any> => {
+  if (DB_TYPE === 'postgres') {
+    const pool = db as Pool;
+    const result = await pool.query(sql, params);
+    return result;
+  } else {
+    const sqlite = db as Database.Database;
+    return sqlite.prepare(sql).run(...params);
+  }
+};
+
+export const get = async (sql: string, params: any[] = []): Promise<any> => {
+  if (DB_TYPE === 'postgres') {
+    const pool = db as Pool;
+    const result = await pool.query(sql, params);
+    return result.rows[0];
+  } else {
+    const sqlite = db as Database.Database;
+    return sqlite.prepare(sql).get(...params);
+  }
+};
+
+export const close = () => {
+  if (DB_TYPE === 'postgres') {
+    const pool = db as Pool;
+    pool.end();
+  } else {
+    const sqlite = db as Database.Database;
+    sqlite.close();
+  }
+};
+
+// Helper to check if we're using SQLite
+export const isSQLite = () => DB_TYPE === 'sqlite';
+
+// Helper to check if we're using PostgreSQL
+export const isPostgres = () => DB_TYPE === 'postgres';
+
+// Export the database type for type checking
+export type DbType = typeof DB_TYPE;
+
+// Transaction support
+export const transaction = async (callback: () => Promise<void>) => {
+  if (DB_TYPE === 'postgres') {
+    const pool = db as Pool;
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await callback();
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
     }
-    return DatabaseManager.instance;
-  }
-
-  private initialize() {
-    if (this.dbType === 'sqlite') {
-      this.db = new Database(join(__dirname, '..', config.dbPath));
-      logger.info('SQLite database initialized');
-    } else {
-      this.pool = new Pool({
-        host: config.dbHost,
-        port: config.dbPort,
-        database: config.dbName,
-        user: config.dbUser,
-        password: config.dbPassword,
-      });
-      logger.info('PostgreSQL connection pool initialized');
+  } else {
+    const sqlite = db as Database.Database;
+    sqlite.prepare('BEGIN').run();
+    try {
+      await callback();
+      sqlite.prepare('COMMIT').run();
+    } catch (error) {
+      sqlite.prepare('ROLLBACK').run();
+      throw error;
     }
   }
-
-  getDb(): Database.Database {
-    if (!this.db) throw new Error('SQLite not initialized');
-    return this.db;
-  }
-
-  getPool(): pkg.Pool {
-    if (!this.pool) throw new Error('PostgreSQL not initialized');
-    return this.pool;
-  }
-
-  getType(): 'sqlite' | 'postgres' {
-    return this.dbType;
-  }
-
-  async query(sql: string, params: any[] = []): Promise<any> {
-    if (this.dbType === 'sqlite') {
-      return this.db!.prepare(sql).all(...params);
-    } else {
-      const result = await this.pool!.query(sql, params);
-      return result.rows;
-    }
-  }
-
-  async queryOne(sql: string, params: any[] = []): Promise<any> {
-    if (this.dbType === 'sqlite') {
-      return this.db!.prepare(sql).get(...params);
-    } else {
-      const result = await this.pool!.query(sql, params);
-      return result.rows[0];
-    }
-  }
-
-  async execute(sql: string, params: any[] = []): Promise<any> {
-    if (this.dbType === 'sqlite') {
-      return this.db!.prepare(sql).run(...params);
-    } else {
-      return await this.pool!.query(sql, params);
-    }
-  }
-}
-
-export const db = DatabaseManager.getInstance();
+};
