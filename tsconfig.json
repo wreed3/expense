@@ -32,13 +32,11 @@
   "exclude": [
     "node_modules",
     "dist",
+    "server",
     "**/*.test.ts",
     "**/*.test.tsx",
     "**/*.spec.ts",
     "**/*.spec.tsx",
-    "**/__tests__/**",
-    "server/**/__tests__/**",
-    "server/**/*.test.ts"
-  ],
-  "references": [{ "path": "./tsconfig.node.json" }]
+    "**/__tests__/**"
+  ]
 }
