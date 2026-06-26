@@ -1,62 +1,73 @@
 import { Request, Response, NextFunction } from 'express';
-import { cacheManager } from '../utils/cache.js';
 
-export interface CacheOptions {
+interface CacheOptions {
   ttl?: number; // Time to live in seconds
-  keyGenerator?: (req: Request) => string;
+  key?: (req: Request) => string;
 }
 
-export function cacheMiddleware(options: CacheOptions = {}) {
-  const { ttl = 300, keyGenerator } = options;
+const cache = new Map<string, { data: any; expires: number }>();
 
-  return async (req: Request, res: Response, next: NextFunction) => {
-    if (!cacheManager.getIsEnabled()) {
-      return next();
-    }
+export const cacheMiddleware = (options: CacheOptions = {}) => {
+  const ttl = (options.ttl || 300) * 1000; // Default 5 minutes
+  const keyGenerator = options.key || ((req: Request) => req.originalUrl);
 
+  return (req: Request, res: Response, next: NextFunction) => {
     // Only cache GET requests
     if (req.method !== 'GET') {
       return next();
     }
 
-    try {
-      const cacheKey = keyGenerator 
-        ? keyGenerator(req)
-        : `${req.originalUrl}:user:${req.user?.id}`;
+    const key = keyGenerator(req);
+    const cached = cache.get(key);
 
-      const cachedData = await cacheManager.get(cacheKey);
+    if (cached && cached.expires > Date.now()) {
+      return res.json(cached.data);
+    }
 
-      if (cachedData) {
-        return res.json(cachedData);
+    // Store original send function
+    const originalSend = res.send;
+
+    res.send = function (data: any) {
+      // Cache the response
+      try {
+        const jsonData = typeof data === 'string' ? JSON.parse(data) : data;
+        cache.set(key, {
+          data: jsonData,
+          expires: Date.now() + ttl,
+        });
+      } catch (error) {
+        // If parsing fails, don't cache
       }
 
-      // Store original json method
-      const originalJson = res.json.bind(res);
+      return originalSend.call(this, data);
+    };
 
-      // Override json method to cache response
-      res.json = function (data: any) {
-        cacheManager.set(cacheKey, data, ttl).catch(err => {
-          console.error('Failed to cache response:', err);
-        });
-        return originalJson(data);
-      };
-
-      next();
-    } catch (error) {
-      console.error('Cache middleware error:', error);
-      next();
-    }
+    next();
   };
-}
+};
 
-export function invalidateCache(pattern: string) {
-  return async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      await cacheManager.delPattern(pattern);
-      next();
-    } catch (error) {
-      console.error('Cache invalidation error:', error);
-      next();
+export const clearCache = (pattern?: string) => {
+  if (!pattern) {
+    cache.clear();
+    return;
+  }
+
+  const keys = Array.from(cache.keys());
+  keys.forEach((key) => {
+    if (key.includes(pattern)) {
+      cache.delete(key);
     }
-  };
-}
+  });
+};
+
+// Clean up expired cache entries periodically
+setInterval(() => {
+  const now = Date.now();
+  const keys = Array.from(cache.keys());
+  keys.forEach((key) => {
+    const cached = cache.get(key);
+    if (cached && cached.expires < now) {
+      cache.delete(key);
+    }
+  });
+}, 60000); // Run every minute

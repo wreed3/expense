@@ -1,55 +1,40 @@
 import { Request, Response, NextFunction } from 'express';
-import { ZodError } from 'zod';
-import { logger } from '../utils/logger';
+import { logger } from '../utils/logger.js';
 
-export function errorHandler(
+export const errorHandler = (
   err: Error,
-  req: Request,
+  _req: Request,
   res: Response,
-  next: NextFunction
-) {
-  logger.error('Error:', err);
-
-  // Zod validation errors
-  if (err instanceof ZodError) {
-    return res.status(400).json({
-      message: 'Validation error',
-      errors: err.errors.map(e => ({
-        field: e.path.join('.'),
-        message: e.message,
-      })),
-    });
-  }
-
-  // Multer file upload errors
-  if (err.message.includes('File too large')) {
-    return res.status(400).json({
-      message: 'File size exceeds maximum allowed size',
-    });
-  }
-
-  if (err.message.includes('Invalid file type')) {
-    return res.status(400).json({
-      message: err.message,
-    });
-  }
-
-  // SQLite errors
-  if (err.message.includes('UNIQUE constraint failed')) {
-    return res.status(400).json({
-      message: 'A record with this value already exists',
-    });
-  }
-
-  if (err.message.includes('FOREIGN KEY constraint failed')) {
-    return res.status(400).json({
-      message: 'Invalid reference to related record',
-    });
-  }
+  _next: NextFunction
+) => {
+  logger.error('Error occurred', {
+    error: err.message,
+    stack: err.stack,
+  });
 
   // Default error
-  res.status(500).json({
-    message: 'Internal server error',
-    ...(process.env.NODE_ENV === 'development' && { error: err.message }),
+  let statusCode = 500;
+  let message = 'Internal server error';
+
+  // Handle specific error types
+  if (err.name === 'ValidationError') {
+    statusCode = 400;
+    message = err.message;
+  } else if (err.name === 'UnauthorizedError') {
+    statusCode = 401;
+    message = 'Unauthorized';
+  } else if (err.name === 'ForbiddenError') {
+    statusCode = 403;
+    message = 'Forbidden';
+  } else if (err.name === 'NotFoundError') {
+    statusCode = 404;
+    message = 'Not found';
+  } else if (err.message) {
+    message = err.message;
+  }
+
+  res.status(statusCode).json({
+    error: message,
+    ...(process.env.NODE_ENV === 'development' && { stack: err.stack }),
   });
-}
+};

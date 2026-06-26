@@ -1,45 +1,57 @@
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import rateLimit from 'express-rate-limit';
-import { config } from './config';
-import { errorHandler } from './middleware/errorHandler';
-import { logger } from './utils/logger';
-import authRoutes from './routes/auth';
-import expenseRoutes from './routes/expenses';
-import { categoryRoutes } from './routes/categories';
-import budgetRoutes from './routes/budgets';
-import analyticsRoutes from './routes/analytics';
-import exportRoutes from './routes/export';
+import { rateLimit } from 'express-rate-limit';
+import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+
+// Load environment variables
+dotenv.config();
+
+// Import routes
+import authRoutes from './routes/auth.js';
+import expenseRoutes from './routes/expenses.js';
+import categoryRoutes from './routes/categories.js';
+import budgetRoutes from './routes/budgets.js';
+import analyticsRoutes from './routes/analytics.js';
+import exportRoutes from './routes/export.js';
+
+// Import middleware
+import { errorHandler } from './middleware/errorHandler.js';
+import { auditLog } from './middleware/auditLog.js';
+import { logger } from './utils/logger.js';
 
 const app = express();
+const PORT = process.env.PORT || 3001;
 
-// Security middleware
+// Middleware
 app.use(helmet());
 app.use(cors({
-  origin: config.clientUrl,
+  origin: process.env.CLIENT_URL || 'http://localhost:3000',
   credentials: true,
 }));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // Rate limiting
 const limiter = rateLimit({
-  windowMs: config.rateLimitWindowMs,
-  max: config.rateLimitMaxRequests,
+  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000'), // 15 minutes
+  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100'),
   message: 'Too many requests from this IP, please try again later.',
 });
 app.use('/api/', limiter);
 
-// Body parsing
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Audit logging
+app.use(auditLog);
 
-// Request logging
-app.use((req, res, next) => {
-  logger.info(`${req.method} ${req.path}`);
-  next();
+// Health check endpoint
+app.get('/api/health', (_req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Routes
+// API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/expenses', expenseRoutes);
 app.use('/api/categories', categoryRoutes);
@@ -47,16 +59,31 @@ app.use('/api/budgets', budgetRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/export', exportRoutes);
 
-// Health check
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
-});
+// Serve uploaded files
+const uploadsPath = process.env.UPLOAD_DIR || './uploads';
+app.use('/uploads', express.static(uploadsPath));
 
-// Error handling
+// Error handling middleware
 app.use(errorHandler);
 
+// 404 handler
+app.use((_req, res) => {
+  res.status(404).json({ error: 'Not found' });
+});
+
 // Start server
-const PORT = config.port;
 app.listen(PORT, () => {
-  logger.info(`Server running on port ${PORT} in ${config.nodeEnv} mode`);
+  logger.info(`Server running on port ${PORT}`);
+  logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  logger.info('SIGTERM signal received: closing HTTP server');
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  logger.info('SIGINT signal received: closing HTTP server');
+  process.exit(0);
 });
