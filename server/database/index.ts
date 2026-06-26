@@ -1,125 +1,235 @@
 import Database from 'better-sqlite3';
-import { logger } from '../utils/logger.js';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import logger from '../utils/logger.js';
+import { dbConfig } from '../config.js';
+import type { Expense, Category, Budget, User } from '../../src/types/index.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+let db: Database.Database;
 
-let db: Database.Database | null = null;
-
-export const initializeDatabase = async () => {
-  try {
-    const dbPath = process.env.DB_PATH || './expenses.db';
-    const fullPath = path.resolve(dbPath);
-
-    logger.info(`Initializing database at: ${fullPath}`);
-
-    db = new Database(fullPath, {
-      verbose: process.env.NODE_ENV === 'development' ? logger.info : undefined,
-    });
-
-    // Enable foreign keys
-    db.pragma('foreign_keys = ON');
-
-    // Create tables
-    createTables();
-
-    logger.info('Database initialized successfully');
-  } catch (error) {
-    logger.error('Failed to initialize database:', error);
-    throw error;
+export function initializeDatabase() {
+  if (dbConfig.type === 'sqlite') {
+    db = new Database(dbConfig.path);
+    db.pragma('journal_mode = WAL');
+    logger.info('SQLite database initialized');
+  } else {
+    throw new Error('PostgreSQL not yet implemented');
   }
-};
+}
 
-const createTables = () => {
-  if (!db) throw new Error('Database not initialized');
-
-  // Users table
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      email TEXT UNIQUE NOT NULL,
-      password TEXT NOT NULL,
-      name TEXT NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-
-  // Categories table
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS categories (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      name TEXT NOT NULL,
-      color TEXT DEFAULT '#3B82F6',
-      icon TEXT DEFAULT 'folder',
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-      UNIQUE(user_id, name)
-    )
-  `);
-
-  // Expenses table
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS expenses (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      category_id INTEGER NOT NULL,
-      amount REAL NOT NULL,
-      description TEXT NOT NULL,
-      date DATE NOT NULL,
-      receipt_path TEXT,
-      is_recurring BOOLEAN DEFAULT 0,
-      recurring_frequency TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-      FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE
-    )
-  `);
-
-  // Budgets table
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS budgets (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      category_id INTEGER NOT NULL,
-      amount REAL NOT NULL,
-      month TEXT NOT NULL,
-      alert_threshold REAL DEFAULT 0.8,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-      FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE,
-      UNIQUE(user_id, category_id, month)
-    )
-  `);
-
-  // Create indexes
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_expenses_user_id ON expenses(user_id);
-    CREATE INDEX IF NOT EXISTS idx_expenses_category_id ON expenses(category_id);
-    CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(date);
-    CREATE INDEX IF NOT EXISTS idx_categories_user_id ON categories(user_id);
-    CREATE INDEX IF NOT EXISTS idx_budgets_user_id ON budgets(user_id);
-  `);
-
-  logger.info('Database tables created successfully');
-};
-
-export const getDatabase = (): Database.Database => {
+export function getDatabase(): Database.Database {
   if (!db) {
-    throw new Error('Database not initialized. Call initializeDatabase() first.');
+    throw new Error('Database not initialized');
   }
   return db;
-};
+}
 
-export const closeDatabase = () => {
-  if (db) {
-    db.close();
-    db = null;
-    logger.info('Database connection closed');
+// User operations
+export function createUser(email: string, password: string, name: string): User {
+  const stmt = db.prepare('INSERT INTO users (email, password, name) VALUES (?, ?, ?)');
+  const result = stmt.run(email, password, name);
+  return getUserById(result.lastInsertRowid as number)!;
+}
+
+export function getUserByEmail(email: string): User | undefined {
+  const stmt = db.prepare('SELECT * FROM users WHERE email = ?');
+  return stmt.get(email) as User | undefined;
+}
+
+export function getUserById(id: number): User | undefined {
+  const stmt = db.prepare('SELECT * FROM users WHERE id = ?');
+  return stmt.get(id) as User | undefined;
+}
+
+// Expense operations
+export function getExpenses(userId: number): Expense[] {
+  const stmt = db.prepare(`
+    SELECT e.*, c.name as categoryName, c.color as categoryColor
+    FROM expenses e
+    LEFT JOIN categories c ON e.category_id = c.id
+    WHERE e.user_id = ?
+    ORDER BY e.date DESC
+  `);
+  return stmt.all(userId) as Expense[];
+}
+
+export function createExpense(expense: Omit<Expense, 'id'>): Expense {
+  const stmt = db.prepare(`
+    INSERT INTO expenses (user_id, amount, category_id, description, date, receipt_path)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  const result = stmt.run(
+    expense.userId,
+    expense.amount,
+    expense.categoryId,
+    expense.description,
+    expense.date,
+    expense.receiptPath || null
+  );
+  return getExpenseById(result.lastInsertRowid as number)!;
+}
+
+export function getExpenseById(id: number): Expense | undefined {
+  const stmt = db.prepare(`
+    SELECT e.*, c.name as categoryName, c.color as categoryColor
+    FROM expenses e
+    LEFT JOIN categories c ON e.category_id = c.id
+    WHERE e.id = ?
+  `);
+  return stmt.get(id) as Expense | undefined;
+}
+
+export function updateExpense(id: number, expense: Partial<Expense>): Expense | undefined {
+  const updates: string[] = [];
+  const values: any[] = [];
+
+  if (expense.amount !== undefined) {
+    updates.push('amount = ?');
+    values.push(expense.amount);
   }
-};
+  if (expense.categoryId !== undefined) {
+    updates.push('category_id = ?');
+    values.push(expense.categoryId);
+  }
+  if (expense.description !== undefined) {
+    updates.push('description = ?');
+    values.push(expense.description);
+  }
+  if (expense.date !== undefined) {
+    updates.push('date = ?');
+    values.push(expense.date);
+  }
+  if (expense.receiptPath !== undefined) {
+    updates.push('receipt_path = ?');
+    values.push(expense.receiptPath);
+  }
+
+  if (updates.length === 0) {
+    return getExpenseById(id);
+  }
+
+  values.push(id);
+  const stmt = db.prepare(`UPDATE expenses SET ${updates.join(', ')} WHERE id = ?`);
+  stmt.run(...values);
+  return getExpenseById(id);
+}
+
+export function deleteExpense(id: number): void {
+  const stmt = db.prepare('DELETE FROM expenses WHERE id = ?');
+  stmt.run(id);
+}
+
+// Category operations
+export function getCategories(userId: number): Category[] {
+  const stmt = db.prepare('SELECT * FROM categories WHERE user_id = ? OR user_id IS NULL ORDER BY name');
+  return stmt.all(userId) as Category[];
+}
+
+export function createCategory(category: Omit<Category, 'id'>): Category {
+  const stmt = db.prepare('INSERT INTO categories (user_id, name, color, icon) VALUES (?, ?, ?, ?)');
+  const result = stmt.run(category.userId, category.name, category.color, category.icon || null);
+  return getCategoryById(result.lastInsertRowid as number)!;
+}
+
+export function getCategoryById(id: number): Category | undefined {
+  const stmt = db.prepare('SELECT * FROM categories WHERE id = ?');
+  return stmt.get(id) as Category | undefined;
+}
+
+export function updateCategory(id: number, category: Partial<Category>): Category | undefined {
+  const updates: string[] = [];
+  const values: any[] = [];
+
+  if (category.name !== undefined) {
+    updates.push('name = ?');
+    values.push(category.name);
+  }
+  if (category.color !== undefined) {
+    updates.push('color = ?');
+    values.push(category.color);
+  }
+  if (category.icon !== undefined) {
+    updates.push('icon = ?');
+    values.push(category.icon);
+  }
+
+  if (updates.length === 0) {
+    return getCategoryById(id);
+  }
+
+  values.push(id);
+  const stmt = db.prepare(`UPDATE categories SET ${updates.join(', ')} WHERE id = ?`);
+  stmt.run(...values);
+  return getCategoryById(id);
+}
+
+export function deleteCategory(id: number): void {
+  const stmt = db.prepare('DELETE FROM categories WHERE id = ?');
+  stmt.run(id);
+}
+
+// Budget operations
+export function getBudgets(userId: number): Budget[] {
+  const stmt = db.prepare(`
+    SELECT b.*, c.name as categoryName
+    FROM budgets b
+    LEFT JOIN categories c ON b.category_id = c.id
+    WHERE b.user_id = ?
+  `);
+  return stmt.all(userId) as Budget[];
+}
+
+export function createBudget(budget: Omit<Budget, 'id'>): Budget {
+  const stmt = db.prepare(`
+    INSERT INTO budgets (user_id, category_id, amount, period, start_date)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+  const result = stmt.run(
+    budget.userId,
+    budget.categoryId,
+    budget.amount,
+    budget.period,
+    budget.startDate
+  );
+  return getBudgetById(result.lastInsertRowid as number)!;
+}
+
+export function getBudgetById(id: number): Budget | undefined {
+  const stmt = db.prepare(`
+    SELECT b.*, c.name as categoryName
+    FROM budgets b
+    LEFT JOIN categories c ON b.category_id = c.id
+    WHERE b.id = ?
+  `);
+  return stmt.get(id) as Budget | undefined;
+}
+
+export function updateBudget(id: number, budget: Partial<Budget>): Budget | undefined {
+  const updates: string[] = [];
+  const values: any[] = [];
+
+  if (budget.amount !== undefined) {
+    updates.push('amount = ?');
+    values.push(budget.amount);
+  }
+  if (budget.period !== undefined) {
+    updates.push('period = ?');
+    values.push(budget.period);
+  }
+  if (budget.startDate !== undefined) {
+    updates.push('start_date = ?');
+    values.push(budget.startDate);
+  }
+
+  if (updates.length === 0) {
+    return getBudgetById(id);
+  }
+
+  values.push(id);
+  const stmt = db.prepare(`UPDATE budgets SET ${updates.join(', ')} WHERE id = ?`);
+  stmt.run(...values);
+  return getBudgetById(id);
+}
+
+export function deleteBudget(id: number): void {
+  const stmt = db.prepare('DELETE FROM budgets WHERE id = ?');
+  stmt.run(id);
+}
