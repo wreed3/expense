@@ -1,26 +1,15 @@
 import Database from 'better-sqlite3';
 import { Pool } from 'pg';
+import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
-import type { Database as DatabaseType } from 'better-sqlite3';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const DB_TYPE = process.env.DB_TYPE || 'sqlite';
 
-let sqliteDb: DatabaseType | null = null;
-let pgPool: Pool | null = null;
+let db: Database.Database | Pool;
 
-interface QueryResult {
-  rows?: any[];
-  lastInsertRowid?: number;
-  changes?: number;
-}
-
-export function initDatabase(): void {
+export function initializeDatabase() {
   if (DB_TYPE === 'postgres') {
-    pgPool = new Pool({
+    db = new Pool({
       host: process.env.DB_HOST || 'localhost',
       port: parseInt(process.env.DB_PORT || '5432'),
       database: process.env.DB_NAME || 'expense_tracker',
@@ -29,61 +18,44 @@ export function initDatabase(): void {
     });
     console.log('Connected to PostgreSQL database');
   } else {
-    const dbPath = process.env.DB_PATH || path.join(__dirname, '../../expenses.db');
-    sqliteDb = new Database(dbPath);
-    sqliteDb.pragma('journal_mode = WAL');
+    const dbPath = process.env.DB_PATH || './expenses.db';
+    const dbDir = path.dirname(dbPath);
+    
+    // Ensure database directory exists
+    if (!fs.existsSync(dbDir)) {
+      fs.mkdirSync(dbDir, { recursive: true });
+    }
+    
+    db = new Database(dbPath);
+    db.pragma('journal_mode = WAL');
+    db.pragma('foreign_keys = ON');
     console.log('Connected to SQLite database');
   }
+  
+  return db;
 }
 
-export async function query<T = any>(sql: string, params: any[] = []): Promise<T[]> {
-  if (DB_TYPE === 'postgres' && pgPool) {
-    const result = await pgPool.query(sql, params);
-    return result.rows as T[];
-  } else if (sqliteDb) {
-    const stmt = sqliteDb.prepare(sql);
-    const rows = stmt.all(...params) as T[];
-    return rows;
+export function getDatabase() {
+  if (!db) {
+    throw new Error('Database not initialized. Call initializeDatabase() first.');
   }
-  throw new Error('Database not initialized');
+  return db;
 }
 
-export async function run(sql: string, params: any[] = []): Promise<QueryResult> {
-  if (DB_TYPE === 'postgres' && pgPool) {
-    const result = await pgPool.query(sql, params);
-    return {
-      rows: result.rows,
-      changes: result.rowCount || 0,
-    };
-  } else if (sqliteDb) {
-    const stmt = sqliteDb.prepare(sql);
-    const info = stmt.run(...params);
-    return {
-      lastInsertRowid: Number(info.lastInsertRowid),
-      changes: info.changes,
-    };
+export async function closeDatabase() {
+  if (db) {
+    if (DB_TYPE === 'postgres') {
+      await (db as Pool).end();
+    } else {
+      (db as Database.Database).close();
+    }
   }
-  throw new Error('Database not initialized');
 }
 
-export async function get<T = any>(sql: string, params: any[] = []): Promise<T | undefined> {
-  if (DB_TYPE === 'postgres' && pgPool) {
-    const result = await pgPool.query(sql, params);
-    return result.rows[0] as T | undefined;
-  } else if (sqliteDb) {
-    const stmt = sqliteDb.prepare(sql);
-    return stmt.get(...params) as T | undefined;
+export function isDatabaseInitialized(): boolean {
+  if (DB_TYPE === 'sqlite') {
+    const dbPath = process.env.DB_PATH || './expenses.db';
+    return fs.existsSync(dbPath);
   }
-  throw new Error('Database not initialized');
-}
-
-export function closeDatabase(): void {
-  if (sqliteDb) {
-    sqliteDb.close();
-    sqliteDb = null;
-  }
-  if (pgPool) {
-    pgPool.end();
-    pgPool = null;
-  }
+  return true; // For PostgreSQL, assume it's initialized
 }
