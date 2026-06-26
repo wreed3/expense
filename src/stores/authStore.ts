@@ -1,110 +1,97 @@
 import { create } from 'zustand';
 
-interface User {
+export interface User {
   id: number;
   email: string;
-  name: string;
+  name?: string;
 }
 
 interface AuthState {
   user: User | null;
   token: string | null;
-  isLoading: boolean;
-  error: string | null;
+  isAuthenticated: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (email: string, password: string, name: string) => Promise<void>;
+  register: (email: string, password: string, name?: string) => Promise<void>;
   logout: () => void;
-  fetchUser: () => Promise<void>;
+  checkAuth: () => Promise<void>;
 }
 
-export const useAuthStore = create<AuthState>((set, get) => ({
+export const useAuthStore = create<AuthState>((set) => ({
   user: null,
   token: localStorage.getItem('token'),
-  isLoading: false,
-  error: null,
-
+  isAuthenticated: !!localStorage.getItem('token'),
+  
   login: async (email: string, password: string) => {
-    set({ isLoading: true, error: null });
     try {
-      const response = await fetch('http://localhost:3001/api/auth/login', {
+      const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
       });
 
-      const data = await response.json();
-
       if (!response.ok) {
-        throw new Error(data.error || 'Login failed');
+        const error = await response.json();
+        throw new Error(error.error || 'Login failed');
       }
 
+      const data = await response.json();
       localStorage.setItem('token', data.token);
-      set({ user: data.user, token: data.token, isLoading: false });
+      set({ user: data.user, token: data.token, isAuthenticated: true });
     } catch (error) {
-      set({ 
-        error: error instanceof Error ? error.message : 'Login failed',
-        isLoading: false 
-      });
+      console.error('Login error:', error);
+      throw error;
     }
   },
 
-  register: async (email: string, password: string, name: string) => {
-    set({ isLoading: true, error: null });
+  register: async (email: string, password: string, name?: string) => {
     try {
-      const response = await fetch('http://localhost:3001/api/auth/register', {
+      const response = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password, name }),
       });
 
-      const data = await response.json();
-
       if (!response.ok) {
-        throw new Error(data.error || 'Registration failed');
+        const error = await response.json();
+        throw new Error(error.error || 'Registration failed');
       }
 
+      const data = await response.json();
       localStorage.setItem('token', data.token);
-      set({ user: data.user, token: data.token, isLoading: false });
+      set({ user: data.user, token: data.token, isAuthenticated: true });
     } catch (error) {
-      set({ 
-        error: error instanceof Error ? error.message : 'Registration failed',
-        isLoading: false 
-      });
+      console.error('Registration error:', error);
+      throw error;
     }
   },
 
   logout: () => {
     localStorage.removeItem('token');
-    set({ user: null, token: null });
+    set({ user: null, token: null, isAuthenticated: false });
   },
 
-  fetchUser: async () => {
-    const token = get().token || localStorage.getItem('token');
-    
+  checkAuth: async () => {
+    const token = localStorage.getItem('token');
     if (!token) {
+      set({ user: null, token: null, isAuthenticated: false });
       return;
     }
 
-    set({ isLoading: true });
     try {
-      const response = await fetch('http://localhost:3001/api/auth/me', {
-        headers: { 
-          'Authorization': `Bearer ${token}`,
-        },
+      const response = await fetch('/api/auth/me', {
+        headers: { Authorization: `Bearer ${token}` },
       });
 
-      const data = await response.json();
-
       if (!response.ok) {
-        localStorage.removeItem('token');
-        set({ user: null, token: null, isLoading: false });
-        return;
+        throw new Error('Authentication failed');
       }
 
-      set({ user: data.user, token, isLoading: false });
+      const user = await response.json();
+      set({ user, token, isAuthenticated: true });
     } catch (error) {
+      console.error('Auth check error:', error);
       localStorage.removeItem('token');
-      set({ user: null, token: null, isLoading: false });
+      set({ user: null, token: null, isAuthenticated: false });
     }
   },
 }));
