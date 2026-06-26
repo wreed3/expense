@@ -1,54 +1,30 @@
 import { Request, Response, NextFunction } from 'express';
-import { logger } from '../utils/logger.js';
+import logger from '../utils/logger.js';
 
-export class AppError extends Error {
-  statusCode: number;
-  isOperational: boolean;
-
-  constructor(message: string, statusCode: number) {
-    super(message);
-    this.statusCode = statusCode;
-    this.isOperational = true;
-
-    Error.captureStackTrace(this, this.constructor);
-  }
+interface ErrorWithStatus extends Error {
+  statusCode?: number;
+  errors?: Record<string, string[]>;
 }
 
-export const errorHandler = (
-  err: Error | AppError,
+export function errorHandler(
+  err: ErrorWithStatus,
   req: Request,
   res: Response,
   next: NextFunction
-) => {
-  let statusCode = 500;
-  let message = 'Internal Server Error';
-  let isOperational = false;
-
-  if (err instanceof AppError) {
-    statusCode = err.statusCode;
-    message = err.message;
-    isOperational = err.isOperational;
-  }
-
-  // Log error
-  logger.error({
+): void {
+  logger.error('Error:', {
     message: err.message,
-    statusCode,
     stack: err.stack,
     url: req.url,
     method: req.method,
   });
 
-  // Send response
+  const statusCode = err.statusCode || 500;
+  const message = err.message || 'Internal Server Error';
+
   res.status(statusCode).json({
-    status: 'error',
     message,
+    errors: err.errors,
     ...(process.env.NODE_ENV === 'development' && { stack: err.stack }),
   });
-};
-
-export const asyncHandler = (fn: Function) => {
-  return (req: Request, res: Response, next: NextFunction) => {
-    Promise.resolve(fn(req, res, next)).catch(next);
-  };
-};
+}
