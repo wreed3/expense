@@ -1,233 +1,231 @@
-import express from 'express';
+import express, { Response } from 'express';
 import { z } from 'zod';
-import { getDatabase } from '../database/index.js';
-import { AppError, asyncHandler } from '../middleware/errorHandler.js';
-import { authenticate, AuthRequest } from '../middleware/auth.js';
+import { query, get, run } from '../utils/db.js';
+import { authenticateToken } from '../middleware/auth.js';
+import { validateRequest } from '../middleware/validateRequest.js';
+import logger from '../utils/logger.js';
+import type {
+  AuthRequest,
+  Budget,
+  BudgetWithCategory,
+  CreateBudgetBody,
+  UpdateBudgetBody,
+} from '../types/index.js';
 
 const router = express.Router();
 
-const budgetSchema = z.object({
-  categoryId: z.number(),
-  amount: z.number().positive(),
-  month: z.string().regex(/^\d{4}-\d{2}$/),
-  alertThreshold: z.number().min(0).max(1).optional(),
+// Validation schemas
+const createBudgetSchema = z.object({
+  category_id: z.number().int().positive('Valid category is required'),
+  amount: z.number().positive('Amount must be positive'),
+  month: z.string().regex(/^\d{4}-\d{2}$/, 'Month must be in YYYY-MM format'),
 });
 
-// Get all budgets
-router.get(
-  '/',
-  authenticate,
-  asyncHandler(async (req: AuthRequest, res) => {
-    const db = getDatabase();
-    const { month } = req.query;
+const updateBudgetSchema = createBudgetSchema.partial();
 
-    let query = `
-      SELECT b.*, c.name as category_name, c.color as category_color,
-        (SELECT COALESCE(SUM(amount), 0) 
-         FROM expenses 
-         WHERE category_id = b.category_id 
-         AND strftime('%Y-%m', date) = b.month) as spent
+// Get all budgets
+router.get('/', authenticateToken, async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: 'Not authenticated' });
+      return;
+    }
+
+    const { month } = req.query as { month?: string };
+
+    let sql = `
+      SELECT b.*, c.name as category_name,
+             COALESCE(SUM(e.amount), 0) as spent
       FROM budgets b
       JOIN categories c ON b.category_id = c.id
+      LEFT JOIN expenses e ON e.category_id = b.category_id
+        AND strftime('%Y-%m', e.date) = b.month
+        AND e.user_id = b.user_id
       WHERE b.user_id = ?
     `;
-    const params: any[] = [req.userId!];
+    const params: any[] = [req.user.id];
 
     if (month) {
-      query += ' AND b.month = ?';
+      sql += ' AND b.month = ?';
       params.push(month);
     }
 
-    query += ' ORDER BY b.month DESC, c.name';
+    sql += ' GROUP BY b.id ORDER BY b.month DESC, c.name';
 
-    const budgets = db.prepare(query).all(...params);
-
+    const budgets = await query<BudgetWithCategory>(sql, params);
     res.json(budgets);
-  })
-);
+  } catch (error) {
+    logger.error('Get budgets error:', error);
+    res.status(500).json({ message: 'Error fetching budgets' });
+  }
+});
 
 // Get single budget
-router.get(
-  '/:id',
-  authenticate,
-  asyncHandler(async (req: AuthRequest, res) => {
-    const db = getDatabase();
+router.get('/:id', authenticateToken, async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: 'Not authenticated' });
+      return;
+    }
 
-    const budget = db
-      .prepare(
-        `
-      SELECT b.*, c.name as category_name, c.color as category_color,
-        (SELECT COALESCE(SUM(amount), 0) 
-         FROM expenses 
-         WHERE category_id = b.category_id 
-         AND strftime('%Y-%m', date) = b.month) as spent
-      FROM budgets b
-      JOIN categories c ON b.category_id = c.id
-      WHERE b.id = ? AND b.user_id = ?
-    `
-      )
-      .get(req.params.id, req.userId!);
+    const budget = await get<BudgetWithCategory>(
+      `SELECT b.*, c.name as category_name,
+              COALESCE(SUM(e.amount), 0) as spent
+       FROM budgets b
+       JOIN categories c ON b.category_id = c.id
+       LEFT JOIN expenses e ON e.category_id = b.category_id
+         AND strftime('%Y-%m', e.date) = b.month
+         AND e.user_id = b.user_id
+       WHERE b.id = ? AND b.user_id = ?
+       GROUP BY b.id`,
+      [req.params.id, req.user.id]
+    );
 
     if (!budget) {
-      throw new AppError('Budget not found', 404);
+      res.status(404).json({ message: 'Budget not found' });
+      return;
     }
 
     res.json(budget);
-  })
-);
+  } catch (error) {
+    logger.error('Get budget error:', error);
+    res.status(500).json({ message: 'Error fetching budget' });
+  }
+});
 
 // Create budget
 router.post(
   '/',
-  authenticate,
-  asyncHandler(async (req: AuthRequest, res) => {
-    const data = budgetSchema.parse(req.body);
+  authenticateToken,
+  validateRequest(createBudgetSchema),
+  async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      if (!req.user) {
+        res.status(401).json({ message: 'Not authenticated' });
+        return;
+      }
 
-    const db = getDatabase();
+      const { category_id, amount, month } = req.body as CreateBudgetBody;
 
-    // Verify category belongs to user
-    const category = db
-      .prepare('SELECT id FROM categories WHERE id = ? AND user_id = ?')
-      .get(data.categoryId, req.userId!);
-
-    if (!category) {
-      throw new AppError('Category not found', 404);
-    }
-
-    // Check if budget already exists for this category and month
-    const existing = db
-      .prepare(
-        'SELECT id FROM budgets WHERE user_id = ? AND category_id = ? AND month = ?'
-      )
-      .get(req.userId!, data.categoryId, data.month);
-
-    if (existing) {
-      throw new AppError('Budget already exists for this category and month', 400);
-    }
-
-    const result = db
-      .prepare(
-        `
-      INSERT INTO budgets (user_id, category_id, amount, month, alert_threshold)
-      VALUES (?, ?, ?, ?, ?)
-    `
-      )
-      .run(
-        req.userId!,
-        data.categoryId,
-        data.amount,
-        data.month,
-        data.alertThreshold || 0.8
+      // Check if budget already exists for this category and month
+      const existing = await get<Budget>(
+        'SELECT * FROM budgets WHERE user_id = ? AND category_id = ? AND month = ?',
+        [req.user.id, category_id, month]
       );
 
-    const budget = db
-      .prepare(
-        `
-      SELECT b.*, c.name as category_name, c.color as category_color,
-        (SELECT COALESCE(SUM(amount), 0) 
-         FROM expenses 
-         WHERE category_id = b.category_id 
-         AND strftime('%Y-%m', date) = b.month) as spent
-      FROM budgets b
-      JOIN categories c ON b.category_id = c.id
-      WHERE b.id = ?
-    `
-      )
-      .get(result.lastInsertRowid);
+      if (existing) {
+        res.status(400).json({
+          message: 'Budget already exists for this category and month',
+        });
+        return;
+      }
 
-    res.status(201).json(budget);
-  })
+      const result = await query<Budget>(
+        'INSERT INTO budgets (user_id, category_id, amount, month) VALUES (?, ?, ?, ?) RETURNING *',
+        [req.user.id, category_id, amount, month]
+      );
+
+      logger.info('Budget created:', { budgetId: result[0].id, userId: req.user.id });
+      res.status(201).json(result[0]);
+    } catch (error) {
+      logger.error('Create budget error:', error);
+      res.status(500).json({ message: 'Error creating budget' });
+    }
+  }
 );
 
 // Update budget
 router.put(
   '/:id',
-  authenticate,
-  asyncHandler(async (req: AuthRequest, res) => {
-    const data = budgetSchema.parse(req.body);
+  authenticateToken,
+  validateRequest(updateBudgetSchema),
+  async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      if (!req.user) {
+        res.status(401).json({ message: 'Not authenticated' });
+        return;
+      }
 
-    const db = getDatabase();
+      const budget = await get<Budget>(
+        'SELECT * FROM budgets WHERE id = ? AND user_id = ?',
+        [req.params.id, req.user.id]
+      );
 
-    // Verify budget belongs to user
-    const existing = db
-      .prepare('SELECT id FROM budgets WHERE id = ? AND user_id = ?')
-      .get(req.params.id, req.userId!);
+      if (!budget) {
+        res.status(404).json({ message: 'Budget not found' });
+        return;
+      }
 
-    if (!existing) {
-      throw new AppError('Budget not found', 404);
+      const updates = req.body as UpdateBudgetBody;
+
+      // Check for duplicate if category or month is being updated
+      if (updates.category_id || updates.month) {
+        const existing = await get<Budget>(
+          'SELECT * FROM budgets WHERE user_id = ? AND category_id = ? AND month = ? AND id != ?',
+          [
+            req.user.id,
+            updates.category_id ?? budget.category_id,
+            updates.month ?? budget.month,
+            req.params.id,
+          ]
+        );
+
+        if (existing) {
+          res.status(400).json({
+            message: 'Budget already exists for this category and month',
+          });
+          return;
+        }
+      }
+
+      const result = await query<Budget>(
+        `UPDATE budgets
+         SET category_id = ?, amount = ?, month = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ? AND user_id = ? RETURNING *`,
+        [
+          updates.category_id ?? budget.category_id,
+          updates.amount ?? budget.amount,
+          updates.month ?? budget.month,
+          req.params.id,
+          req.user.id,
+        ]
+      );
+
+      logger.info('Budget updated:', { budgetId: req.params.id, userId: req.user.id });
+      res.json(result[0]);
+    } catch (error) {
+      logger.error('Update budget error:', error);
+      res.status(500).json({ message: 'Error updating budget' });
     }
-
-    // Verify category belongs to user
-    const category = db
-      .prepare('SELECT id FROM categories WHERE id = ? AND user_id = ?')
-      .get(data.categoryId, req.userId!);
-
-    if (!category) {
-      throw new AppError('Category not found', 404);
-    }
-
-    // Check if new category/month combination conflicts
-    const conflict = db
-      .prepare(
-        'SELECT id FROM budgets WHERE user_id = ? AND category_id = ? AND month = ? AND id != ?'
-      )
-      .get(req.userId!, data.categoryId, data.month, req.params.id);
-
-    if (conflict) {
-      throw new AppError('Budget already exists for this category and month', 400);
-    }
-
-    db.prepare(
-      `
-      UPDATE budgets
-      SET category_id = ?, amount = ?, month = ?, alert_threshold = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ? AND user_id = ?
-    `
-    ).run(
-      data.categoryId,
-      data.amount,
-      data.month,
-      data.alertThreshold || 0.8,
-      req.params.id,
-      req.userId!
-    );
-
-    const budget = db
-      .prepare(
-        `
-      SELECT b.*, c.name as category_name, c.color as category_color,
-        (SELECT COALESCE(SUM(amount), 0) 
-         FROM expenses 
-         WHERE category_id = b.category_id 
-         AND strftime('%Y-%m', date) = b.month) as spent
-      FROM budgets b
-      JOIN categories c ON b.category_id = c.id
-      WHERE b.id = ?
-    `
-      )
-      .get(req.params.id);
-
-    res.json(budget);
-  })
+  }
 );
 
 // Delete budget
-router.delete(
-  '/:id',
-  authenticate,
-  asyncHandler(async (req: AuthRequest, res) => {
-    const db = getDatabase();
-
-    const result = db
-      .prepare('DELETE FROM budgets WHERE id = ? AND user_id = ?')
-      .run(req.params.id, req.userId!);
-
-    if (result.changes === 0) {
-      throw new AppError('Budget not found', 404);
+router.delete('/:id', authenticateToken, async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: 'Not authenticated' });
+      return;
     }
 
-    res.status(204).send();
-  })
-);
+    const budget = await get<Budget>(
+      'SELECT * FROM budgets WHERE id = ? AND user_id = ?',
+      [req.params.id, req.user.id]
+    );
+
+    if (!budget) {
+      res.status(404).json({ message: 'Budget not found' });
+      return;
+    }
+
+    await run('DELETE FROM budgets WHERE id = ? AND user_id = ?', [req.params.id, req.user.id]);
+
+    logger.info('Budget deleted:', { budgetId: req.params.id, userId: req.user.id });
+    res.json({ message: 'Budget deleted successfully' });
+  } catch (error) {
+    logger.error('Delete budget error:', error);
+    res.status(500).json({ message: 'Error deleting budget' });
+  }
+});
 
 export default router;

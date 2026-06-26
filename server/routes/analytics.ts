@@ -1,197 +1,149 @@
-import express from 'express';
-import { getDatabase } from '../database/index.js';
-import { asyncHandler } from '../middleware/errorHandler.js';
-import { authenticate, AuthRequest } from '../middleware/auth.js';
+import express, { Response } from 'express';
+import { query } from '../utils/db.js';
+import { authenticateToken } from '../middleware/auth.js';
+import logger from '../utils/logger.js';
+import type {
+  AuthRequest,
+  CategorySpending,
+  MonthlySpending,
+  SpendingSummary,
+  AnalyticsQueryParams,
+} from '../types/index.js';
 
 const router = express.Router();
 
 // Get spending summary
-router.get(
-  '/summary',
-  authenticate,
-  asyncHandler(async (req: AuthRequest, res) => {
-    const db = getDatabase();
-    const { startDate, endDate } = req.query;
-
-    let dateFilter = '';
-    const params: any[] = [req.userId!];
-
-    if (startDate && endDate) {
-      dateFilter = 'AND date BETWEEN ? AND ?';
-      params.push(startDate, endDate);
+router.get('/summary', authenticateToken, async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: 'Not authenticated' });
+      return;
     }
 
-    const summary = db
-      .prepare(
-        `
-      SELECT 
-        COUNT(*) as total_expenses,
-        COALESCE(SUM(amount), 0) as total_amount,
-        COALESCE(AVG(amount), 0) as average_amount,
-        COALESCE(MAX(amount), 0) as max_amount,
-        COALESCE(MIN(amount), 0) as min_amount
-      FROM expenses
-      WHERE user_id = ? ${dateFilter}
-    `
-      )
-      .get(...params);
+    const { start_date, end_date } = req.query as AnalyticsQueryParams;
+
+    let dateFilter = '';
+    const params: any[] = [req.user.id];
+
+    if (start_date && end_date) {
+      dateFilter = 'AND e.date BETWEEN ? AND ?';
+      params.push(start_date, end_date);
+    }
+
+    // Total expenses and amount
+    const totals = await query<{ count: number; total: number }>(
+      `SELECT COUNT(*) as count, COALESCE(SUM(amount), 0) as total
+       FROM expenses e
+       WHERE e.user_id = ? ${dateFilter}`,
+      params
+    );
+
+    // Category breakdown
+    const categoryBreakdown = await query<CategorySpending>(
+      `SELECT c.id as category_id, c.name as category_name, c.color as category_color,
+              COALESCE(SUM(e.amount), 0) as total_spent
+       FROM categories c
+       LEFT JOIN expenses e ON e.category_id = c.id AND e.user_id = ? ${dateFilter}
+       WHERE c.user_id = ?
+       GROUP BY c.id
+       ORDER BY total_spent DESC`,
+      [...params, req.user.id]
+    );
+
+    // Monthly trend
+    const monthlyTrend = await query<MonthlySpending>(
+      `SELECT strftime('%Y-%m', date) as month, SUM(amount) as total
+       FROM expenses
+       WHERE user_id = ? ${dateFilter}
+       GROUP BY month
+       ORDER BY month DESC
+       LIMIT 12`,
+      params
+    );
+
+    const summary: SpendingSummary = {
+      total_expenses: totals[0]?.count || 0,
+      total_spent: totals[0]?.total || 0,
+      category_breakdown: categoryBreakdown,
+      monthly_trend: monthlyTrend,
+    };
 
     res.json(summary);
-  })
-);
+  } catch (error) {
+    logger.error('Get summary error:', error);
+    res.status(500).json({ message: 'Error fetching summary' });
+  }
+});
 
 // Get spending trends
-router.get(
-  '/trends',
-  authenticate,
-  asyncHandler(async (req: AuthRequest, res) => {
-    const db = getDatabase();
-    const { period = 'month' } = req.query;
-
-    let groupBy = "strftime('%Y-%m', date)";
-    if (period === 'week') {
-      groupBy = "strftime('%Y-W%W', date)";
-    } else if (period === 'day') {
-      groupBy = "date";
+router.get('/trends', authenticateToken, async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: 'Not authenticated' });
+      return;
     }
 
-    const trends = db
-      .prepare(
-        `
-      SELECT 
-        ${groupBy} as period,
-        COUNT(*) as expense_count,
-        COALESCE(SUM(amount), 0) as total_amount
-      FROM expenses
-      WHERE user_id = ?
-      GROUP BY ${groupBy}
-      ORDER BY period DESC
-      LIMIT 12
-    `
-      )
-      .all(req.userId!);
-
-    res.json(trends.reverse());
-  })
-);
-
-// Get category breakdown
-router.get(
-  '/categories',
-  authenticate,
-  asyncHandler(async (req: AuthRequest, res) => {
-    const db = getDatabase();
-    const { startDate, endDate } = req.query;
+    const { start_date, end_date } = req.query as AnalyticsQueryParams;
 
     let dateFilter = '';
-    const params: any[] = [req.userId!];
+    const params: any[] = [req.user.id];
 
-    if (startDate && endDate) {
-      dateFilter = 'AND e.date BETWEEN ? AND ?';
-      params.push(startDate, endDate);
-    }
-
-    const breakdown = db
-      .prepare(
-        `
-      SELECT 
-        c.id,
-        c.name,
-        c.color,
-        COUNT(e.id) as expense_count,
-        COALESCE(SUM(e.amount), 0) as total_amount,
-        COALESCE(AVG(e.amount), 0) as average_amount
-      FROM categories c
-      LEFT JOIN expenses e ON c.id = e.category_id ${dateFilter ? 'AND e.user_id = ?' : ''}
-      WHERE c.user_id = ?
-      GROUP BY c.id, c.name, c.color
-      ORDER BY total_amount DESC
-    `
-      )
-      .all(dateFilter ? req.userId! : undefined, req.userId!);
-
-    res.json(breakdown);
-  })
-);
-
-// Get top expenses
-router.get(
-  '/top-expenses',
-  authenticate,
-  asyncHandler(async (req: AuthRequest, res) => {
-    const db = getDatabase();
-    const { limit = 10, startDate, endDate } = req.query;
-
-    let dateFilter = '';
-    const params: any[] = [req.userId!];
-
-    if (startDate && endDate) {
+    if (start_date && end_date) {
       dateFilter = 'AND date BETWEEN ? AND ?';
-      params.push(startDate, endDate);
+      params.push(start_date, end_date);
     }
 
-    params.push(limit);
+    const trends = await query<{ date: string; total: number }>(
+      `SELECT date, SUM(amount) as total
+       FROM expenses
+       WHERE user_id = ? ${dateFilter}
+       GROUP BY date
+       ORDER BY date DESC`,
+      params
+    );
 
-    const topExpenses = db
-      .prepare(
-        `
-      SELECT e.*, c.name as category_name, c.color as category_color
-      FROM expenses e
-      JOIN categories c ON e.category_id = c.id
-      WHERE e.user_id = ? ${dateFilter}
-      ORDER BY e.amount DESC
-      LIMIT ?
-    `
-      )
-      .all(...params);
+    res.json(trends);
+  } catch (error) {
+    logger.error('Get trends error:', error);
+    res.status(500).json({ message: 'Error fetching trends' });
+  }
+});
 
-    res.json(topExpenses);
-  })
-);
+// Get category spending
+router.get('/categories', authenticateToken, async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: 'Not authenticated' });
+      return;
+    }
 
-// Get budget alerts
-router.get(
-  '/budget-alerts',
-  authenticate,
-  asyncHandler(async (req: AuthRequest, res) => {
-    const db = getDatabase();
-    const currentMonth = new Date().toISOString().slice(0, 7);
+    const { start_date, end_date } = req.query as AnalyticsQueryParams;
 
-    const alerts = db
-      .prepare(
-        `
-      SELECT 
-        b.*,
-        c.name as category_name,
-        c.color as category_color,
-        (SELECT COALESCE(SUM(amount), 0) 
-         FROM expenses 
-         WHERE category_id = b.category_id 
-         AND strftime('%Y-%m', date) = b.month) as spent,
-        CASE 
-          WHEN (SELECT COALESCE(SUM(amount), 0) 
-                FROM expenses 
-                WHERE category_id = b.category_id 
-                AND strftime('%Y-%m', date) = b.month) >= b.amount 
-          THEN 'exceeded'
-          WHEN (SELECT COALESCE(SUM(amount), 0) 
-                FROM expenses 
-                WHERE category_id = b.category_id 
-                AND strftime('%Y-%m', date) = b.month) >= (b.amount * b.alert_threshold)
-          THEN 'warning'
-          ELSE 'ok'
-        END as status
-      FROM budgets b
-      JOIN categories c ON b.category_id = c.id
-      WHERE b.user_id = ? AND b.month = ?
-      HAVING status != 'ok'
-      ORDER BY spent DESC
-    `
-      )
-      .all(req.userId!, currentMonth);
+    let dateFilter = '';
+    const params: any[] = [req.user.id];
 
-    res.json(alerts);
-  })
-);
+    if (start_date && end_date) {
+      dateFilter = 'AND e.date BETWEEN ? AND ?';
+      params.push(start_date, end_date);
+    }
+
+    const categorySpending = await query<CategorySpending>(
+      `SELECT c.id as category_id, c.name as category_name, c.color as category_color,
+              COALESCE(SUM(e.amount), 0) as total_spent
+       FROM categories c
+       LEFT JOIN expenses e ON e.category_id = c.id AND e.user_id = ? ${dateFilter}
+       WHERE c.user_id = ?
+       GROUP BY c.id
+       HAVING total_spent > 0
+       ORDER BY total_spent DESC`,
+      [...params, req.user.id]
+    );
+
+    res.json(categorySpending);
+  } catch (error) {
+    logger.error('Get category spending error:', error);
+    res.status(500).json({ message: 'Error fetching category spending' });
+  }
+});
 
 export default router;

@@ -1,170 +1,209 @@
-import express from 'express';
+import express, { Response } from 'express';
 import { z } from 'zod';
-import { getDatabase } from '../database/index.js';
-import { AppError, asyncHandler } from '../middleware/errorHandler.js';
-import { authenticate, AuthRequest } from '../middleware/auth.js';
+import { query, get, run } from '../utils/db.js';
+import { authenticateToken } from '../middleware/auth.js';
+import { validateRequest } from '../middleware/validateRequest.js';
+import logger from '../utils/logger.js';
+import type {
+  AuthRequest,
+  Category,
+  CreateCategoryBody,
+  UpdateCategoryBody,
+} from '../types/index.js';
 
 const router = express.Router();
 
-const categorySchema = z.object({
-  name: z.string().min(1),
-  color: z.string().regex(/^#[0-9A-F]{6}$/i),
-  icon: z.string().min(1),
+// Validation schemas
+const createCategorySchema = z.object({
+  name: z.string().min(1, 'Category name is required'),
+  color: z.string().regex(/^#[0-9A-F]{6}$/i, 'Color must be a valid hex code'),
+  icon: z.string().min(1, 'Icon is required'),
 });
 
-// Get all categories
-router.get(
-  '/',
-  authenticate,
-  asyncHandler(async (req: AuthRequest, res) => {
-    const db = getDatabase();
+const updateCategorySchema = createCategorySchema.partial();
 
-    const categories = db
-      .prepare(
-        `
-      SELECT c.*, 
-        (SELECT COUNT(*) FROM expenses WHERE category_id = c.id) as expense_count,
-        (SELECT COALESCE(SUM(amount), 0) FROM expenses WHERE category_id = c.id) as total_spent
-      FROM categories c
-      WHERE c.user_id = ?
-      ORDER BY c.name
-    `
-      )
-      .all(req.userId!);
+// Get all categories
+router.get('/', authenticateToken, async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: 'Not authenticated' });
+      return;
+    }
+
+    const categories = await query<Category>(
+      'SELECT * FROM categories WHERE user_id = ? ORDER BY name',
+      [req.user.id]
+    );
 
     res.json(categories);
-  })
-);
+  } catch (error) {
+    logger.error('Get categories error:', error);
+    res.status(500).json({ message: 'Error fetching categories' });
+  }
+});
 
 // Get single category
-router.get(
-  '/:id',
-  authenticate,
-  asyncHandler(async (req: AuthRequest, res) => {
-    const db = getDatabase();
+router.get('/:id', authenticateToken, async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: 'Not authenticated' });
+      return;
+    }
 
-    const category = db
-      .prepare(
-        `
-      SELECT c.*,
-        (SELECT COUNT(*) FROM expenses WHERE category_id = c.id) as expense_count,
-        (SELECT COALESCE(SUM(amount), 0) FROM expenses WHERE category_id = c.id) as total_spent
-      FROM categories c
-      WHERE c.id = ? AND c.user_id = ?
-    `
-      )
-      .get(req.params.id, req.userId!);
+    const category = await get<Category>(
+      'SELECT * FROM categories WHERE id = ? AND user_id = ?',
+      [req.params.id, req.user.id]
+    );
 
     if (!category) {
-      throw new AppError('Category not found', 404);
+      res.status(404).json({ message: 'Category not found' });
+      return;
     }
 
     res.json(category);
-  })
-);
+  } catch (error) {
+    logger.error('Get category error:', error);
+    res.status(500).json({ message: 'Error fetching category' });
+  }
+});
 
 // Create category
 router.post(
   '/',
-  authenticate,
-  asyncHandler(async (req: AuthRequest, res) => {
-    const data = categorySchema.parse(req.body);
+  authenticateToken,
+  validateRequest(createCategorySchema),
+  async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      if (!req.user) {
+        res.status(401).json({ message: 'Not authenticated' });
+        return;
+      }
 
-    const db = getDatabase();
+      const { name, color, icon } = req.body as CreateCategoryBody;
 
-    // Check if category name already exists for user
-    const existing = db
-      .prepare('SELECT id FROM categories WHERE user_id = ? AND name = ?')
-      .get(req.userId!, data.name);
+      // Check if category name already exists for this user
+      const existing = await get<Category>(
+        'SELECT * FROM categories WHERE user_id = ? AND name = ?',
+        [req.user.id, name]
+      );
 
-    if (existing) {
-      throw new AppError('Category with this name already exists', 400);
+      if (existing) {
+        res.status(400).json({ message: 'Category with this name already exists' });
+        return;
+      }
+
+      const result = await query<Category>(
+        'INSERT INTO categories (user_id, name, color, icon) VALUES (?, ?, ?, ?) RETURNING *',
+        [req.user.id, name, color, icon]
+      );
+
+      logger.info('Category created:', { categoryId: result[0].id, userId: req.user.id });
+      res.status(201).json(result[0]);
+    } catch (error) {
+      logger.error('Create category error:', error);
+      res.status(500).json({ message: 'Error creating category' });
     }
-
-    const result = db
-      .prepare(
-        'INSERT INTO categories (user_id, name, color, icon) VALUES (?, ?, ?, ?)'
-      )
-      .run(req.userId!, data.name, data.color, data.icon);
-
-    const category = db
-      .prepare('SELECT * FROM categories WHERE id = ?')
-      .get(result.lastInsertRowid);
-
-    res.status(201).json(category);
-  })
+  }
 );
 
 // Update category
 router.put(
   '/:id',
-  authenticate,
-  asyncHandler(async (req: AuthRequest, res) => {
-    const data = categorySchema.parse(req.body);
+  authenticateToken,
+  validateRequest(updateCategorySchema),
+  async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      if (!req.user) {
+        res.status(401).json({ message: 'Not authenticated' });
+        return;
+      }
 
-    const db = getDatabase();
+      const category = await get<Category>(
+        'SELECT * FROM categories WHERE id = ? AND user_id = ?',
+        [req.params.id, req.user.id]
+      );
 
-    // Verify category belongs to user
-    const existing = db
-      .prepare('SELECT id FROM categories WHERE id = ? AND user_id = ?')
-      .get(req.params.id, req.userId!);
+      if (!category) {
+        res.status(404).json({ message: 'Category not found' });
+        return;
+      }
 
-    if (!existing) {
-      throw new AppError('Category not found', 404);
+      const updates = req.body as UpdateCategoryBody;
+
+      // Check for duplicate name if name is being updated
+      if (updates.name && updates.name !== category.name) {
+        const existing = await get<Category>(
+          'SELECT * FROM categories WHERE user_id = ? AND name = ? AND id != ?',
+          [req.user.id, updates.name, req.params.id]
+        );
+
+        if (existing) {
+          res.status(400).json({ message: 'Category with this name already exists' });
+          return;
+        }
+      }
+
+      const result = await query<Category>(
+        `UPDATE categories
+         SET name = ?, color = ?, icon = ?
+         WHERE id = ? AND user_id = ? RETURNING *`,
+        [
+          updates.name ?? category.name,
+          updates.color ?? category.color,
+          updates.icon ?? category.icon,
+          req.params.id,
+          req.user.id,
+        ]
+      );
+
+      logger.info('Category updated:', { categoryId: req.params.id, userId: req.user.id });
+      res.json(result[0]);
+    } catch (error) {
+      logger.error('Update category error:', error);
+      res.status(500).json({ message: 'Error updating category' });
     }
-
-    // Check if new name conflicts with another category
-    const nameConflict = db
-      .prepare(
-        'SELECT id FROM categories WHERE user_id = ? AND name = ? AND id != ?'
-      )
-      .get(req.userId!, data.name, req.params.id);
-
-    if (nameConflict) {
-      throw new AppError('Category with this name already exists', 400);
-    }
-
-    db.prepare(
-      'UPDATE categories SET name = ?, color = ?, icon = ? WHERE id = ? AND user_id = ?'
-    ).run(data.name, data.color, data.icon, req.params.id, req.userId!);
-
-    const category = db
-      .prepare('SELECT * FROM categories WHERE id = ?')
-      .get(req.params.id);
-
-    res.json(category);
-  })
+  }
 );
 
 // Delete category
-router.delete(
-  '/:id',
-  authenticate,
-  asyncHandler(async (req: AuthRequest, res) => {
-    const db = getDatabase();
+router.delete('/:id', authenticateToken, async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: 'Not authenticated' });
+      return;
+    }
+
+    const category = await get<Category>(
+      'SELECT * FROM categories WHERE id = ? AND user_id = ?',
+      [req.params.id, req.user.id]
+    );
+
+    if (!category) {
+      res.status(404).json({ message: 'Category not found' });
+      return;
+    }
 
     // Check if category has expenses
-    const expenseCount = db
-      .prepare('SELECT COUNT(*) as count FROM expenses WHERE category_id = ?')
-      .get(req.params.id) as any;
+    const expenseCount = await get<{ count: number }>(
+      'SELECT COUNT(*) as count FROM expenses WHERE category_id = ?',
+      [req.params.id]
+    );
 
-    if (expenseCount.count > 0) {
-      throw new AppError(
-        'Cannot delete category with existing expenses. Please reassign or delete expenses first.',
-        400
-      );
+    if (expenseCount && expenseCount.count > 0) {
+      res.status(400).json({
+        message: 'Cannot delete category with existing expenses',
+      });
+      return;
     }
 
-    const result = db
-      .prepare('DELETE FROM categories WHERE id = ? AND user_id = ?')
-      .run(req.params.id, req.userId!);
+    await run('DELETE FROM categories WHERE id = ? AND user_id = ?', [req.params.id, req.user.id]);
 
-    if (result.changes === 0) {
-      throw new AppError('Category not found', 404);
-    }
-
-    res.status(204).send();
-  })
-);
+    logger.info('Category deleted:', { categoryId: req.params.id, userId: req.user.id });
+    res.json({ message: 'Category deleted successfully' });
+  } catch (error) {
+    logger.error('Delete category error:', error);
+    res.status(500).json({ message: 'Error deleting category' });
+  }
+});
 
 export default router;

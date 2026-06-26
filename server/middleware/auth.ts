@@ -1,34 +1,34 @@
-import { Request, Response, NextFunction } from 'express';
+import { Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import { AppError } from './errorHandler.js';
+import type { AuthRequest, JwtPayload } from '../types/index.js';
+import logger from '../utils/logger.js';
 
-export interface AuthRequest extends Request {
-  userId?: number;
-}
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 
-export const authenticate = (
+export async function authenticateToken(
   req: AuthRequest,
   res: Response,
   next: NextFunction
-) => {
+): Promise<void> {
   try {
-    const token = req.headers.authorization?.split(' ')[1];
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
 
     if (!token) {
-      throw new AppError('Authentication required', 401);
+      res.status(401).json({ message: 'Access token required' });
+      return;
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET!) as {
-      userId: number;
+    const decoded = jwt.verify(token, JWT_SECRET) as JwtPayload;
+    req.user = {
+      id: decoded.userId,
+      email: decoded.email,
+      name: '', // Will be populated from database if needed
     };
 
-    req.userId = decoded.userId;
     next();
   } catch (error) {
-    if (error instanceof jwt.JsonWebTokenError) {
-      next(new AppError('Invalid token', 401));
-    } else {
-      next(error);
-    }
+    logger.error('Authentication error:', error);
+    res.status(403).json({ message: 'Invalid or expired token' });
   }
-};
+}
