@@ -1,104 +1,56 @@
 import Database from 'better-sqlite3';
-import { Pool } from 'pg';
+import type { Pool } from 'pg';
+import { dbConfig } from './config.js';
+import logger from './utils/logger.js';
 
-const DB_TYPE = (process.env.DB_TYPE || 'sqlite') as 'sqlite' | 'postgres';
+let sqliteDb: Database.Database | null = null;
+let pgPool: Pool | null = null;
 
-let db: Database.Database | Pool;
-
-if (DB_TYPE === 'postgres') {
-  const pool = new Pool({
-    host: process.env.DB_HOST || 'localhost',
-    port: parseInt(process.env.DB_PORT || '5432'),
-    database: process.env.DB_NAME || 'expense_tracker',
-    user: process.env.DB_USER || 'postgres',
-    password: process.env.DB_PASSWORD,
-  });
-
-  db = pool;
-} else {
-  const sqlite = new Database(process.env.DB_PATH || './expenses.db');
-  sqlite.pragma('journal_mode = WAL');
-  db = sqlite;
+export function initDatabase() {
+  if (dbConfig.type === 'sqlite') {
+    sqliteDb = new Database(dbConfig.path);
+    sqliteDb.pragma('journal_mode = WAL');
+    logger.info(`SQLite database initialized at ${dbConfig.path}`);
+  } else if (dbConfig.type === 'postgres') {
+    // Note: pg module is optional dependency
+    // Import dynamically to avoid errors when not installed
+    import('pg').then(({ Pool }) => {
+      pgPool = new Pool({
+        host: dbConfig.host,
+        port: dbConfig.port,
+        database: dbConfig.database,
+        user: dbConfig.user,
+        password: dbConfig.password,
+      });
+      logger.info('PostgreSQL connection pool initialized');
+    }).catch((err) => {
+      logger.error('Failed to initialize PostgreSQL. Make sure pg is installed: npm install pg');
+      throw err;
+    });
+  }
 }
 
-export const getDb = () => db;
-
-export const query = async (sql: string, params: any[] = []): Promise<any[]> => {
-  if (DB_TYPE === 'postgres') {
-    const pool = db as Pool;
-    const result = await pool.query(sql, params);
-    return result.rows;
-  } else {
-    const sqlite = db as Database.Database;
-    return sqlite.prepare(sql).all(...params);
+export function getDb(): Database.Database {
+  if (!sqliteDb) {
+    throw new Error('SQLite database not initialized');
   }
-};
+  return sqliteDb;
+}
 
-export const run = async (sql: string, params: any[] = []): Promise<any> => {
-  if (DB_TYPE === 'postgres') {
-    const pool = db as Pool;
-    const result = await pool.query(sql, params);
-    return result;
-  } else {
-    const sqlite = db as Database.Database;
-    return sqlite.prepare(sql).run(...params);
+export function getPool(): Pool {
+  if (!pgPool) {
+    throw new Error('PostgreSQL pool not initialized');
   }
-};
+  return pgPool;
+}
 
-export const get = async (sql: string, params: any[] = []): Promise<any> => {
-  if (DB_TYPE === 'postgres') {
-    const pool = db as Pool;
-    const result = await pool.query(sql, params);
-    return result.rows[0];
-  } else {
-    const sqlite = db as Database.Database;
-    return sqlite.prepare(sql).get(...params);
+export function closeDb() {
+  if (sqliteDb) {
+    sqliteDb.close();
+    logger.info('SQLite database closed');
   }
-};
-
-export const close = () => {
-  if (DB_TYPE === 'postgres') {
-    const pool = db as Pool;
-    pool.end();
-  } else {
-    const sqlite = db as Database.Database;
-    sqlite.close();
+  if (pgPool) {
+    pgPool.end();
+    logger.info('PostgreSQL connection pool closed');
   }
-};
-
-// Helper to check if we're using SQLite
-export const isSQLite = () => DB_TYPE === 'sqlite';
-
-// Helper to check if we're using PostgreSQL
-export const isPostgres = () => DB_TYPE === 'postgres';
-
-// Export the database type for type checking
-export type DbType = typeof DB_TYPE;
-
-// Transaction support
-export const transaction = async (callback: () => Promise<void>) => {
-  if (DB_TYPE === 'postgres') {
-    const pool = db as Pool;
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      await callback();
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
-  } else {
-    const sqlite = db as Database.Database;
-    sqlite.prepare('BEGIN').run();
-    try {
-      await callback();
-      sqlite.prepare('COMMIT').run();
-    } catch (error) {
-      sqlite.prepare('ROLLBACK').run();
-      throw error;
-    }
-  }
-};
+}
