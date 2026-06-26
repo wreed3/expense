@@ -1,227 +1,264 @@
-import { Router } from 'express';
-import { db } from '../db';
-import { authenticate } from '../middleware/auth';
-import { z } from 'zod';
+import express from 'express';
 import multer from 'multer';
 import path from 'path';
-import { config } from '../config';
+import { z } from 'zod';
+import { getDatabase } from '../database/index.js';
+import { AppError, asyncHandler } from '../middleware/errorHandler.js';
+import { authenticate, AuthRequest } from '../middleware/auth.js';
+import { mkdirSync } from 'fs';
 
-const router = Router();
+const router = express.Router();
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, config.uploadDir);
+    const uploadDir = process.env.UPLOAD_DIR || './uploads';
+    mkdirSync(uploadDir, { recursive: true });
+    cb(null, uploadDir);
   },
   filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
     cb(null, uniqueSuffix + path.extname(file.originalname));
-  }
+  },
 });
 
 const upload = multer({
   storage,
-  limits: { fileSize: config.maxFileSize },
+  limits: {
+    fileSize: parseInt(process.env.MAX_FILE_SIZE || '5242880'),
+  },
   fileFilter: (req, file, cb) => {
-    const allowedTypes = /jpeg|jpg|png|pdf/;
-    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    const mimetype = allowedTypes.test(file.mimetype);
-    
-    if (mimetype && extname) {
-      return cb(null, true);
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/jpg', 'application/pdf'];
+    if (allowedTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid file type. Only JPEG, PNG, and PDF are allowed.'));
     }
-    cb(new Error('Invalid file type. Only JPEG, PNG, and PDF files are allowed.'));
-  }
+  },
 });
 
 const expenseSchema = z.object({
-  description: z.string().min(1, 'Description is required'),
-  amount: z.number().positive('Amount must be positive'),
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format'),
-  category_id: z.number().int().positive(),
-  notes: z.string().optional(),
-  is_recurring: z.boolean().optional(),
-  recurring_frequency: z.enum(['daily', 'weekly', 'monthly', 'yearly']).optional(),
+  categoryId: z.number(),
+  amount: z.number().positive(),
+  description: z.string().min(1),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  isRecurring: z.boolean().optional(),
+  recurringFrequency: z.enum(['daily', 'weekly', 'monthly', 'yearly']).optional(),
 });
 
-// Get all expenses for user
-router.get('/', authenticate, async (req, res, next) => {
-  try {
+// Get all expenses
+router.get(
+  '/',
+  authenticate,
+  asyncHandler(async (req: AuthRequest, res) => {
+    const db = getDatabase();
     const { startDate, endDate, categoryId, search } = req.query;
-    
+
     let query = `
       SELECT e.*, c.name as category_name, c.color as category_color
       FROM expenses e
       JOIN categories c ON e.category_id = c.id
       WHERE e.user_id = ?
     `;
-    const params: any[] = [req.user!.id];
-    
+    const params: any[] = [req.userId!];
+
     if (startDate) {
       query += ' AND e.date >= ?';
       params.push(startDate);
     }
-    
+
     if (endDate) {
       query += ' AND e.date <= ?';
       params.push(endDate);
     }
-    
+
     if (categoryId) {
       query += ' AND e.category_id = ?';
       params.push(categoryId);
     }
-    
-    if (search) {
-      query += ' AND (e.description LIKE ? OR e.notes LIKE ?)';
-      params.push(`%${search}%`, `%${search}%`);
-    }
-    
-    query += ' ORDER BY e.date DESC, e.created_at DESC';
-    
-    const expenses = db.prepare(query).all(...params);
-    res.json(expenses);
-  } catch (error) {
-    next(error);
-  }
-});
 
-// Get expense by ID
-router.get('/:id', authenticate, async (req, res, next) => {
-  try {
-    const expense = db.prepare(`
+    if (search) {
+      query += ' AND e.description LIKE ?';
+      params.push(`%${search}%`);
+    }
+
+    query += ' ORDER BY e.date DESC, e.created_at DESC';
+
+    const expenses = db.prepare(query).all(...params);
+
+    res.json(expenses);
+  })
+);
+
+// Get single expense
+router.get(
+  '/:id',
+  authenticate,
+  asyncHandler(async (req: AuthRequest, res) => {
+    const db = getDatabase();
+
+    const expense = db
+      .prepare(
+        `
       SELECT e.*, c.name as category_name, c.color as category_color
       FROM expenses e
       JOIN categories c ON e.category_id = c.id
       WHERE e.id = ? AND e.user_id = ?
-    `).get(req.params.id, req.user!.id);
-    
+    `
+      )
+      .get(req.params.id, req.userId!);
+
     if (!expense) {
-      return res.status(404).json({ message: 'Expense not found' });
+      throw new AppError('Expense not found', 404);
     }
-    
+
     res.json(expense);
-  } catch (error) {
-    next(error);
-  }
-});
+  })
+);
 
 // Create expense
-router.post('/', authenticate, upload.single('receipt'), async (req, res, next) => {
-  try {
-    const body = {
+router.post(
+  '/',
+  authenticate,
+  upload.single('receipt'),
+  asyncHandler(async (req: AuthRequest, res) => {
+    const data = expenseSchema.parse({
       ...req.body,
+      categoryId: parseInt(req.body.categoryId),
       amount: parseFloat(req.body.amount),
-      category_id: parseInt(req.body.category_id),
-      is_recurring: req.body.is_recurring === 'true',
-    };
-    
-    const validated = expenseSchema.parse(body);
-    
-    const result = db.prepare(`
-      INSERT INTO expenses (
-        description, amount, date, category_id, notes, 
-        is_recurring, recurring_frequency, receipt_path, user_id
+      isRecurring: req.body.isRecurring === 'true',
+    });
+
+    const db = getDatabase();
+
+    // Verify category belongs to user
+    const category = db
+      .prepare('SELECT id FROM categories WHERE id = ? AND user_id = ?')
+      .get(data.categoryId, req.userId!);
+
+    if (!category) {
+      throw new AppError('Category not found', 404);
+    }
+
+    const result = db
+      .prepare(
+        `
+      INSERT INTO expenses (user_id, category_id, amount, description, date, receipt_path, is_recurring, recurring_frequency)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      validated.description,
-      validated.amount,
-      validated.date,
-      validated.category_id,
-      validated.notes,
-      validated.is_recurring || false,
-      validated.recurring_frequency,
-      req.file?.filename,
-      req.user!.id
-    );
-    
-    const expense = db.prepare(`
+      .run(
+        req.userId!,
+        data.categoryId,
+        data.amount,
+        data.description,
+        data.date,
+        req.file?.filename || null,
+        data.isRecurring ? 1 : 0,
+        data.recurringFrequency || null
+      );
+
+    const expense = db
+      .prepare(
+        `
       SELECT e.*, c.name as category_name, c.color as category_color
       FROM expenses e
       JOIN categories c ON e.category_id = c.id
       WHERE e.id = ?
-    `).get(result.lastInsertRowid);
-    
+    `
+      )
+      .get(result.lastInsertRowid);
+
     res.status(201).json(expense);
-  } catch (error) {
-    next(error);
-  }
-});
+  })
+);
 
 // Update expense
-router.put('/:id', authenticate, upload.single('receipt'), async (req, res, next) => {
-  try {
-    const existing = db.prepare(`
-      SELECT * FROM expenses 
-      WHERE id = ? AND user_id = ?
-    `).get(req.params.id, req.user!.id);
-    
-    if (!existing) {
-      return res.status(404).json({ message: 'Expense not found' });
-    }
-    
-    const body = {
+router.put(
+  '/:id',
+  authenticate,
+  upload.single('receipt'),
+  asyncHandler(async (req: AuthRequest, res) => {
+    const data = expenseSchema.parse({
       ...req.body,
+      categoryId: parseInt(req.body.categoryId),
       amount: parseFloat(req.body.amount),
-      category_id: parseInt(req.body.category_id),
-      is_recurring: req.body.is_recurring === 'true',
-    };
-    
-    const validated = expenseSchema.parse(body);
-    
-    db.prepare(`
-      UPDATE expenses 
-      SET description = ?, amount = ?, date = ?, category_id = ?, 
-          notes = ?, is_recurring = ?, recurring_frequency = ?, receipt_path = ?
+      isRecurring: req.body.isRecurring === 'true',
+    });
+
+    const db = getDatabase();
+
+    // Verify expense belongs to user
+    const existingExpense = db
+      .prepare('SELECT * FROM expenses WHERE id = ? AND user_id = ?')
+      .get(req.params.id, req.userId!) as any;
+
+    if (!existingExpense) {
+      throw new AppError('Expense not found', 404);
+    }
+
+    // Verify category belongs to user
+    const category = db
+      .prepare('SELECT id FROM categories WHERE id = ? AND user_id = ?')
+      .get(data.categoryId, req.userId!);
+
+    if (!category) {
+      throw new AppError('Category not found', 404);
+    }
+
+    const receiptPath = req.file?.filename || existingExpense.receipt_path;
+
+    db.prepare(
+      `
+      UPDATE expenses
+      SET category_id = ?, amount = ?, description = ?, date = ?, receipt_path = ?, 
+          is_recurring = ?, recurring_frequency = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ? AND user_id = ?
-    `).run(
-      validated.description,
-      validated.amount,
-      validated.date,
-      validated.category_id,
-      validated.notes,
-      validated.is_recurring || false,
-      validated.recurring_frequency,
-      req.file?.filename || existing.receipt_path,
+    `
+    ).run(
+      data.categoryId,
+      data.amount,
+      data.description,
+      data.date,
+      receiptPath,
+      data.isRecurring ? 1 : 0,
+      data.recurringFrequency || null,
       req.params.id,
-      req.user!.id
+      req.userId!
     );
-    
-    const expense = db.prepare(`
+
+    const expense = db
+      .prepare(
+        `
       SELECT e.*, c.name as category_name, c.color as category_color
       FROM expenses e
       JOIN categories c ON e.category_id = c.id
       WHERE e.id = ?
-    `).get(req.params.id);
-    
+    `
+      )
+      .get(req.params.id);
+
     res.json(expense);
-  } catch (error) {
-    next(error);
-  }
-});
+  })
+);
 
 // Delete expense
-router.delete('/:id', authenticate, async (req, res, next) => {
-  try {
-    const expense = db.prepare(`
-      SELECT * FROM expenses 
-      WHERE id = ? AND user_id = ?
-    `).get(req.params.id, req.user!.id);
-    
-    if (!expense) {
-      return res.status(404).json({ message: 'Expense not found' });
+router.delete(
+  '/:id',
+  authenticate,
+  asyncHandler(async (req: AuthRequest, res) => {
+    const db = getDatabase();
+
+    const result = db
+      .prepare('DELETE FROM expenses WHERE id = ? AND user_id = ?')
+      .run(req.params.id, req.userId!);
+
+    if (result.changes === 0) {
+      throw new AppError('Expense not found', 404);
     }
-    
-    db.prepare(`
-      DELETE FROM expenses 
-      WHERE id = ? AND user_id = ?
-    `).run(req.params.id, req.user!.id);
-    
+
     res.status(204).send();
-  } catch (error) {
-    next(error);
-  }
-});
+  })
+);
 
 export default router;

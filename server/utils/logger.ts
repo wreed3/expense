@@ -1,5 +1,5 @@
 import winston from 'winston';
-import { config } from '../config';
+import { mkdirSync } from 'fs';
 
 const logFormat = winston.format.combine(
   winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
@@ -11,17 +11,17 @@ const logFormat = winston.format.combine(
 const consoleFormat = winston.format.combine(
   winston.format.colorize(),
   winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
-  winston.format.printf(({ timestamp, level, message, ...metadata }) => {
+  winston.format.printf(({ timestamp, level, message, ...meta }) => {
     let msg = `${timestamp} [${level}]: ${message}`;
-    if (Object.keys(metadata).length > 0) {
-      msg += ` ${JSON.stringify(metadata)}`;
+    if (Object.keys(meta).length > 0) {
+      msg += ` ${JSON.stringify(meta)}`;
     }
     return msg;
   })
 );
 
 export const logger = winston.createLogger({
-  level: config.nodeEnv === 'development' ? 'debug' : 'info',
+  level: process.env.LOG_LEVEL || 'info',
   format: logFormat,
   transports: [
     new winston.transports.Console({
@@ -30,15 +30,20 @@ export const logger = winston.createLogger({
     new winston.transports.File({
       filename: 'logs/error.log',
       level: 'error',
+      maxsize: 5242880, // 5MB
+      maxFiles: 5,
     }),
     new winston.transports.File({
       filename: 'logs/combined.log',
+      maxsize: 5242880,
+      maxFiles: 5,
     }),
   ],
 });
 
 // Create logs directory if it doesn't exist
-import fs from 'fs';
-if (!fs.existsSync('logs')) {
-  fs.mkdirSync('logs');
+try {
+  mkdirSync('logs', { recursive: true });
+} catch (err) {
+  // Directory already exists
 }

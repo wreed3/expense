@@ -1,143 +1,197 @@
-import { Router } from 'express';
-import { db } from '../db';
-import { authenticate } from '../middleware/auth';
+import express from 'express';
+import { getDatabase } from '../database/index.js';
+import { asyncHandler } from '../middleware/errorHandler.js';
+import { authenticate, AuthRequest } from '../middleware/auth.js';
 
-const router = Router();
+const router = express.Router();
 
 // Get spending summary
-router.get('/summary', authenticate, async (req, res, next) => {
-  try {
+router.get(
+  '/summary',
+  authenticate,
+  asyncHandler(async (req: AuthRequest, res) => {
+    const db = getDatabase();
     const { startDate, endDate } = req.query;
-    
-    let query = `
+
+    let dateFilter = '';
+    const params: any[] = [req.userId!];
+
+    if (startDate && endDate) {
+      dateFilter = 'AND date BETWEEN ? AND ?';
+      params.push(startDate, endDate);
+    }
+
+    const summary = db
+      .prepare(
+        `
       SELECT 
         COUNT(*) as total_expenses,
-        SUM(amount) as total_amount,
-        AVG(amount) as average_amount,
-        MAX(amount) as max_amount,
-        MIN(amount) as min_amount
+        COALESCE(SUM(amount), 0) as total_amount,
+        COALESCE(AVG(amount), 0) as average_amount,
+        COALESCE(MAX(amount), 0) as max_amount,
+        COALESCE(MIN(amount), 0) as min_amount
       FROM expenses
-      WHERE user_id = ?
-    `;
-    const params: any[] = [req.user!.id];
-    
-    if (startDate) {
-      query += ' AND date >= ?';
-      params.push(startDate);
-    }
-    
-    if (endDate) {
-      query += ' AND date <= ?';
-      params.push(endDate);
-    }
-    
-    const summary = db.prepare(query).get(...params);
+      WHERE user_id = ? ${dateFilter}
+    `
+      )
+      .get(...params);
+
     res.json(summary);
-  } catch (error) {
-    next(error);
-  }
-});
+  })
+);
 
 // Get spending trends
-router.get('/trends', authenticate, async (req, res, next) => {
-  try {
+router.get(
+  '/trends',
+  authenticate,
+  asyncHandler(async (req: AuthRequest, res) => {
+    const db = getDatabase();
     const { period = 'month' } = req.query;
-    
-    let dateFormat = '%Y-%m';
-    if (period === 'day') dateFormat = '%Y-%m-%d';
-    if (period === 'year') dateFormat = '%Y';
-    
-    const trends = db.prepare(`
+
+    let groupBy = "strftime('%Y-%m', date)";
+    if (period === 'week') {
+      groupBy = "strftime('%Y-W%W', date)";
+    } else if (period === 'day') {
+      groupBy = "date";
+    }
+
+    const trends = db
+      .prepare(
+        `
       SELECT 
-        strftime('${dateFormat}', date) as period,
-        COUNT(*) as count,
-        SUM(amount) as total,
-        AVG(amount) as average
+        ${groupBy} as period,
+        COUNT(*) as expense_count,
+        COALESCE(SUM(amount), 0) as total_amount
       FROM expenses
       WHERE user_id = ?
-      GROUP BY period
+      GROUP BY ${groupBy}
       ORDER BY period DESC
       LIMIT 12
-    `).all(req.user!.id);
-    
-    res.json(trends);
-  } catch (error) {
-    next(error);
-  }
-});
+    `
+      )
+      .all(req.userId!);
+
+    res.json(trends.reverse());
+  })
+);
 
 // Get category breakdown
-router.get('/categories', authenticate, async (req, res, next) => {
-  try {
+router.get(
+  '/categories',
+  authenticate,
+  asyncHandler(async (req: AuthRequest, res) => {
+    const db = getDatabase();
     const { startDate, endDate } = req.query;
-    
-    let query = `
-      SELECT 
-        c.id,
-        c.name,
-        c.color,
-        COUNT(e.id) as count,
-        SUM(e.amount) as total,
-        AVG(e.amount) as average
-      FROM categories c
-      LEFT JOIN expenses e ON c.id = e.category_id AND e.user_id = ?
-    `;
-    const params: any[] = [req.user!.id];
-    
-    if (startDate || endDate) {
-      query += ' WHERE';
-      if (startDate) {
-        query += ' e.date >= ?';
-        params.push(startDate);
-      }
-      if (endDate) {
-        if (startDate) query += ' AND';
-        query += ' e.date <= ?';
-        params.push(endDate);
-      }
-    }
-    
-    query += ' GROUP BY c.id ORDER BY total DESC';
-    
-    const breakdown = db.prepare(query).all(...params);
-    res.json(breakdown);
-  } catch (error) {
-    next(error);
-  }
-});
 
-// Get budget vs actual
-router.get('/budget-comparison', authenticate, async (req, res, next) => {
-  try {
-    const { month } = req.query;
-    
-    if (!month) {
-      return res.status(400).json({ message: 'Month parameter is required (YYYY-MM)' });
+    let dateFilter = '';
+    const params: any[] = [req.userId!];
+
+    if (startDate && endDate) {
+      dateFilter = 'AND e.date BETWEEN ? AND ?';
+      params.push(startDate, endDate);
     }
-    
-    const comparison = db.prepare(`
+
+    const breakdown = db
+      .prepare(
+        `
       SELECT 
         c.id,
         c.name,
         c.color,
-        b.amount as budget,
-        COALESCE(SUM(e.amount), 0) as actual,
-        b.amount - COALESCE(SUM(e.amount), 0) as remaining
+        COUNT(e.id) as expense_count,
+        COALESCE(SUM(e.amount), 0) as total_amount,
+        COALESCE(AVG(e.amount), 0) as average_amount
       FROM categories c
-      LEFT JOIN budgets b ON c.id = b.category_id AND b.month = ? AND b.user_id = ?
-      LEFT JOIN expenses e ON c.id = e.category_id 
-        AND strftime('%Y-%m', e.date) = ? 
-        AND e.user_id = ?
+      LEFT JOIN expenses e ON c.id = e.category_id ${dateFilter ? 'AND e.user_id = ?' : ''}
       WHERE c.user_id = ?
-      GROUP BY c.id
-      HAVING b.amount IS NOT NULL
-      ORDER BY c.name
-    `).all(month, req.user!.id, month, req.user!.id, req.user!.id);
-    
-    res.json(comparison);
-  } catch (error) {
-    next(error);
-  }
-});
+      GROUP BY c.id, c.name, c.color
+      ORDER BY total_amount DESC
+    `
+      )
+      .all(dateFilter ? req.userId! : undefined, req.userId!);
+
+    res.json(breakdown);
+  })
+);
+
+// Get top expenses
+router.get(
+  '/top-expenses',
+  authenticate,
+  asyncHandler(async (req: AuthRequest, res) => {
+    const db = getDatabase();
+    const { limit = 10, startDate, endDate } = req.query;
+
+    let dateFilter = '';
+    const params: any[] = [req.userId!];
+
+    if (startDate && endDate) {
+      dateFilter = 'AND date BETWEEN ? AND ?';
+      params.push(startDate, endDate);
+    }
+
+    params.push(limit);
+
+    const topExpenses = db
+      .prepare(
+        `
+      SELECT e.*, c.name as category_name, c.color as category_color
+      FROM expenses e
+      JOIN categories c ON e.category_id = c.id
+      WHERE e.user_id = ? ${dateFilter}
+      ORDER BY e.amount DESC
+      LIMIT ?
+    `
+      )
+      .all(...params);
+
+    res.json(topExpenses);
+  })
+);
+
+// Get budget alerts
+router.get(
+  '/budget-alerts',
+  authenticate,
+  asyncHandler(async (req: AuthRequest, res) => {
+    const db = getDatabase();
+    const currentMonth = new Date().toISOString().slice(0, 7);
+
+    const alerts = db
+      .prepare(
+        `
+      SELECT 
+        b.*,
+        c.name as category_name,
+        c.color as category_color,
+        (SELECT COALESCE(SUM(amount), 0) 
+         FROM expenses 
+         WHERE category_id = b.category_id 
+         AND strftime('%Y-%m', date) = b.month) as spent,
+        CASE 
+          WHEN (SELECT COALESCE(SUM(amount), 0) 
+                FROM expenses 
+                WHERE category_id = b.category_id 
+                AND strftime('%Y-%m', date) = b.month) >= b.amount 
+          THEN 'exceeded'
+          WHEN (SELECT COALESCE(SUM(amount), 0) 
+                FROM expenses 
+                WHERE category_id = b.category_id 
+                AND strftime('%Y-%m', date) = b.month) >= (b.amount * b.alert_threshold)
+          THEN 'warning'
+          ELSE 'ok'
+        END as status
+      FROM budgets b
+      JOIN categories c ON b.category_id = c.id
+      WHERE b.user_id = ? AND b.month = ?
+      HAVING status != 'ok'
+      ORDER BY spent DESC
+    `
+      )
+      .all(req.userId!, currentMonth);
+
+    res.json(alerts);
+  })
+);
 
 export default router;

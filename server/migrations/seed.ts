@@ -1,109 +1,125 @@
-import { db } from '../database.js';
-import { logger } from '../logger.js';
 import bcrypt from 'bcrypt';
+import { getDatabase, initializeDatabase } from '../database/index.js';
+import { logger } from '../utils/logger.js';
 
-async function seed() {
-  logger.info('Starting database seeding...');
-
+async function seedDatabase() {
   try {
+    logger.info('Starting database seeding...');
+    await initializeDatabase();
+
+    const db = getDatabase();
+
     // Create demo user
     const hashedPassword = await bcrypt.hash('demo123', 10);
-    const userResult = await db.execute(
-      'INSERT INTO users (email, password, name) VALUES (?, ?, ?)',
-      ['demo@example.com', hashedPassword, 'Demo User']
-    );
-    const userId = userResult.lastID || 1;
+    const userResult = db
+      .prepare(
+        'INSERT INTO users (email, password, name) VALUES (?, ?, ?) ON CONFLICT(email) DO NOTHING'
+      )
+      .run('demo@example.com', hashedPassword, 'Demo User');
 
-    logger.info('Demo user created: demo@example.com / demo123');
+    const userId = userResult.lastInsertRowid || 1;
 
     // Create default categories
     const categories = [
-      { name: 'Food & Dining', color: '#FF6B6B', icon: '🍔' },
-      { name: 'Transportation', color: '#4ECDC4', icon: '🚗' },
-      { name: 'Shopping', color: '#45B7D1', icon: '🛍️' },
-      { name: 'Entertainment', color: '#96CEB4', icon: '🎬' },
-      { name: 'Bills & Utilities', color: '#FFEAA7', icon: '💡' },
-      { name: 'Healthcare', color: '#DFE6E9', icon: '⚕️' },
-      { name: 'Education', color: '#A29BFE', icon: '📚' },
-      { name: 'Other', color: '#B2BEC3', icon: '📌' },
+      { name: 'Food & Dining', color: '#EF4444', icon: 'utensils' },
+      { name: 'Transportation', color: '#3B82F6', icon: 'car' },
+      { name: 'Shopping', color: '#8B5CF6', icon: 'shopping-bag' },
+      { name: 'Entertainment', color: '#EC4899', icon: 'film' },
+      { name: 'Bills & Utilities', color: '#F59E0B', icon: 'receipt' },
+      { name: 'Healthcare', color: '#10B981', icon: 'heart' },
+      { name: 'Other', color: '#6B7280', icon: 'folder' },
     ];
 
+    const categoryStmt = db.prepare(
+      'INSERT INTO categories (user_id, name, color, icon) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, name) DO NOTHING'
+    );
+
     for (const category of categories) {
-      await db.execute(
-        'INSERT INTO categories (user_id, name, color, icon) VALUES (?, ?, ?, ?)',
-        [userId, category.name, category.color, category.icon]
-      );
+      categoryStmt.run(userId, category.name, category.color, category.icon);
     }
 
-    logger.info('Default categories created');
+    // Get category IDs
+    const categoryIds = db
+      .prepare('SELECT id, name FROM categories WHERE user_id = ?')
+      .all(userId) as Array<{ id: number; name: string }>;
 
     // Create sample expenses
+    const expenseStmt = db.prepare(
+      'INSERT INTO expenses (user_id, category_id, amount, description, date) VALUES (?, ?, ?, ?, ?)'
+    );
+
+    const today = new Date();
+    const thisMonth = today.toISOString().slice(0, 7);
+
     const sampleExpenses = [
-      { description: 'Grocery shopping', amount: 85.50, category: 'Food & Dining', date: '2024-01-15' },
-      { description: 'Gas station', amount: 45.00, category: 'Transportation', date: '2024-01-16' },
-      { description: 'Movie tickets', amount: 30.00, category: 'Entertainment', date: '2024-01-17' },
-      { description: 'Electricity bill', amount: 120.00, category: 'Bills & Utilities', date: '2024-01-18' },
-      { description: 'New shoes', amount: 75.00, category: 'Shopping', date: '2024-01-19' },
+      {
+        category: 'Food & Dining',
+        amount: 45.5,
+        description: 'Grocery shopping',
+        daysAgo: 2,
+      },
+      {
+        category: 'Transportation',
+        amount: 60.0,
+        description: 'Gas station',
+        daysAgo: 5,
+      },
+      {
+        category: 'Shopping',
+        amount: 120.0,
+        description: 'Clothing store',
+        daysAgo: 7,
+      },
+      {
+        category: 'Entertainment',
+        amount: 25.0,
+        description: 'Movie tickets',
+        daysAgo: 10,
+      },
+      {
+        category: 'Bills & Utilities',
+        amount: 150.0,
+        description: 'Electric bill',
+        daysAgo: 15,
+      },
     ];
 
     for (const expense of sampleExpenses) {
-      const category = await db.queryOne(
-        'SELECT id FROM categories WHERE name = ? AND user_id = ?',
-        [expense.category, userId]
-      );
-
-      await db.execute(
-        'INSERT INTO expenses (user_id, description, amount, category_id, date) VALUES (?, ?, ?, ?, ?)',
-        [userId, expense.description, expense.amount, category.id, expense.date]
-      );
+      const category = categoryIds.find((c) => c.name === expense.category);
+      if (category) {
+        const expenseDate = new Date(today);
+        expenseDate.setDate(expenseDate.getDate() - expense.daysAgo);
+        expenseStmt.run(
+          userId,
+          category.id,
+          expense.amount,
+          expense.description,
+          expenseDate.toISOString().slice(0, 10)
+        );
+      }
     }
 
-    logger.info('Sample expenses created');
-
-    // Create sample budget
-    const foodCategory = await db.queryOne(
-      'SELECT id FROM categories WHERE name = ? AND user_id = ?',
-      ['Food & Dining', userId]
+    // Create sample budgets
+    const budgetStmt = db.prepare(
+      'INSERT INTO budgets (user_id, category_id, amount, month) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, category_id, month) DO NOTHING'
     );
 
-    await db.execute(
-      'INSERT INTO budgets (user_id, category_id, amount, period, start_date, alert_threshold) VALUES (?, ?, ?, ?, ?, ?)',
-      [userId, foodCategory.id, 500, 'monthly', '2024-01-01', 80]
-    );
-
-    logger.info('Sample budget created');
-
-    // Create sample tags
-    const tags = [
-      { name: 'Work', color: '#3498db' },
-      { name: 'Personal', color: '#e74c3c' },
-      { name: 'Family', color: '#2ecc71' },
-    ];
-
-    for (const tag of tags) {
-      await db.execute(
-        'INSERT INTO tags (user_id, name, color) VALUES (?, ?, ?)',
-        [userId, tag.name, tag.color]
-      );
+    for (const category of categoryIds) {
+      if (category.name !== 'Other') {
+        budgetStmt.run(userId, category.id, 500, thisMonth);
+      }
     }
 
-    logger.info('Sample tags created');
+    logger.info('Database seeded successfully');
+    logger.info('Demo user credentials:');
+    logger.info('  Email: demo@example.com');
+    logger.info('  Password: demo123');
 
-    logger.info('Database seeding completed successfully!');
+    process.exit(0);
   } catch (error) {
     logger.error('Seeding failed:', error);
-    throw error;
+    process.exit(1);
   }
 }
 
-// Run seed if this file is executed directly
-if (import.meta.url === `file://${process.argv[1]}`) {
-  seed()
-    .then(() => process.exit(0))
-    .catch((error) => {
-      logger.error('Seed failed:', error);
-      process.exit(1);
-    });
-}
-
-export { seed };
+seedDatabase();

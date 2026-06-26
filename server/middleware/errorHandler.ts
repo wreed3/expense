@@ -1,40 +1,54 @@
 import { Request, Response, NextFunction } from 'express';
 import { logger } from '../utils/logger.js';
 
+export class AppError extends Error {
+  statusCode: number;
+  isOperational: boolean;
+
+  constructor(message: string, statusCode: number) {
+    super(message);
+    this.statusCode = statusCode;
+    this.isOperational = true;
+
+    Error.captureStackTrace(this, this.constructor);
+  }
+}
+
 export const errorHandler = (
-  err: Error,
-  _req: Request,
+  err: Error | AppError,
+  req: Request,
   res: Response,
-  _next: NextFunction
+  next: NextFunction
 ) => {
-  logger.error('Error occurred', {
-    error: err.message,
-    stack: err.stack,
-  });
-
-  // Default error
   let statusCode = 500;
-  let message = 'Internal server error';
+  let message = 'Internal Server Error';
+  let isOperational = false;
 
-  // Handle specific error types
-  if (err.name === 'ValidationError') {
-    statusCode = 400;
+  if (err instanceof AppError) {
+    statusCode = err.statusCode;
     message = err.message;
-  } else if (err.name === 'UnauthorizedError') {
-    statusCode = 401;
-    message = 'Unauthorized';
-  } else if (err.name === 'ForbiddenError') {
-    statusCode = 403;
-    message = 'Forbidden';
-  } else if (err.name === 'NotFoundError') {
-    statusCode = 404;
-    message = 'Not found';
-  } else if (err.message) {
-    message = err.message;
+    isOperational = err.isOperational;
   }
 
+  // Log error
+  logger.error({
+    message: err.message,
+    statusCode,
+    stack: err.stack,
+    url: req.url,
+    method: req.method,
+  });
+
+  // Send response
   res.status(statusCode).json({
-    error: message,
+    status: 'error',
+    message,
     ...(process.env.NODE_ENV === 'development' && { stack: err.stack }),
   });
+};
+
+export const asyncHandler = (fn: Function) => {
+  return (req: Request, res: Response, next: NextFunction) => {
+    Promise.resolve(fn(req, res, next)).catch(next);
+  };
 };
