@@ -1,36 +1,34 @@
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import dotenv from 'dotenv';
 import rateLimit from 'express-rate-limit';
-import { fileURLToPath } from 'url';
-import path from 'path';
-import logger from './utils/logger.js';
-import { errorHandler } from './middleware/errorHandler.js';
+import { initDb } from './db.js';
+
+// Import routes
 import authRoutes from './routes/auth.js';
 import expenseRoutes from './routes/expenses.js';
 import categoryRoutes from './routes/categories.js';
 import budgetRoutes from './routes/budgets.js';
 import analyticsRoutes from './routes/analytics.js';
 import exportRoutes from './routes/export.js';
-import './db.js'; // Initialize database
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Security middleware
-app.use(helmet({
-  contentSecurityPolicy: false, // Disable for development
-  crossOriginEmbedderPolicy: false,
-}));
+// Initialize database
+initDb();
 
-// CORS configuration
+// Middleware
+app.use(helmet());
 app.use(cors({
   origin: process.env.CLIENT_URL || 'http://localhost:3000',
   credentials: true,
 }));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // Rate limiting
 const limiter = rateLimit({
@@ -38,17 +36,9 @@ const limiter = rateLimit({
   max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100'),
   message: 'Too many requests from this IP, please try again later.',
 });
+app.use('/api/', limiter);
 
-app.use('/api', limiter);
-
-// Body parsing middleware
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-// Serve uploaded files
-app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
-
-// API routes
+// Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/expenses', expenseRoutes);
 app.use('/api/categories', categoryRoutes);
@@ -57,36 +47,22 @@ app.use('/api/analytics', analyticsRoutes);
 app.use('/api/export', exportRoutes);
 
 // Health check
-app.get('/api/health', (_req, res) => {
+app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Serve static files in production
-if (process.env.NODE_ENV === 'production') {
-  const clientBuildPath = path.join(__dirname, '..', 'dist', 'client');
-  app.use(express.static(clientBuildPath));
-
-  app.get('*', (_req, res) => {
-    res.sendFile(path.join(clientBuildPath, 'index.html'));
+// Error handling middleware
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  console.error('Error:', err);
+  res.status(err.status || 500).json({
+    error: err.message || 'Internal server error',
   });
-}
-
-// Error handling middleware (must be last)
-app.use(errorHandler);
+});
 
 // Start server
 app.listen(PORT, () => {
-  logger.info(`Server running on port ${PORT}`);
-  logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`Server running on port ${PORT}`);
+  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
 });
 
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  logger.info('SIGTERM signal received: closing HTTP server');
-  process.exit(0);
-});
-
-process.on('SIGINT', () => {
-  logger.info('SIGINT signal received: closing HTTP server');
-  process.exit(0);
-});
+export default app;

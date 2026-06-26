@@ -1,164 +1,58 @@
-import express, { Response } from 'express';
-import { query } from '../utils/db.js';
-import { authenticateToken } from '../middleware/auth.js';
-import logger from '../utils/logger.js';
-import type { AuthRequest, ExpenseWithCategory, ExpenseQueryParams } from '../types/index.js';
+import express from 'express';
+import { auth } from '../middleware/auth.js';
+import { getDb } from '../db.js';
 
 const router = express.Router();
 
-// Export to CSV
-router.get('/csv', authenticateToken, async (req: AuthRequest, res: Response): Promise<void> => {
+// Export expenses to CSV
+router.get('/csv', auth, async (req, res) => {
   try {
-    if (!req.user) {
-      res.status(401).json({ message: 'Not authenticated' });
-      return;
-    }
+    const db = getDb();
+    const userId = req.userId;
 
-    const { category_id, start_date, end_date } = req.query as ExpenseQueryParams;
-
-    let sql = `
-      SELECT e.date, e.description, e.amount, c.name as category_name
+    const expenses = db.prepare(`
+      SELECT 
+        e.*,
+        c.name as category_name
       FROM expenses e
       JOIN categories c ON e.category_id = c.id
       WHERE e.user_id = ?
-    `;
-    const params: any[] = [req.user.id];
-
-    if (category_id) {
-      sql += ' AND e.category_id = ?';
-      params.push(parseInt(category_id));
-    }
-
-    if (start_date) {
-      sql += ' AND e.date >= ?';
-      params.push(start_date);
-    }
-
-    if (end_date) {
-      sql += ' AND e.date <= ?';
-      params.push(end_date);
-    }
-
-    sql += ' ORDER BY e.date DESC';
-
-    const expenses = await query<ExpenseWithCategory>(sql, params);
+      ORDER BY e.date DESC
+    `).all(userId);
 
     // Generate CSV
-    const csvHeader = 'Date,Description,Amount,Category\n';
-    const csvRows = expenses
-      .map(
-        (expense) =>
-          `${expense.date},"${expense.description}",${expense.amount},"${expense.category_name}"`
-      )
-      .join('\n');
+    const headers = ['Date', 'Description', 'Category', 'Amount', 'Recurring'];
+    const rows = expenses.map((e: any) => [
+      e.date,
+      e.description,
+      e.category_name,
+      e.amount,
+      e.is_recurring ? 'Yes' : 'No',
+    ]);
 
-    const csv = csvHeader + csvRows;
+    const csv = [
+      headers.join(','),
+      ...rows.map(row => row.map(cell => `"${cell}"`).join(',')),
+    ].join('\n');
 
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', 'attachment; filename=expenses.csv');
     res.send(csv);
-
-    logger.info('CSV export completed:', { userId: req.user.id, count: expenses.length });
   } catch (error) {
-    logger.error('CSV export error:', error);
-    res.status(500).json({ message: 'Error exporting to CSV' });
+    console.error('Export CSV error:', error);
+    res.status(500).json({ error: 'Failed to export CSV' });
   }
 });
 
-// Export to PDF (simplified - would use a PDF library in production)
-router.get('/pdf', authenticateToken, async (req: AuthRequest, res: Response): Promise<void> => {
+// Export expenses to PDF
+router.get('/pdf', auth, async (req, res) => {
   try {
-    if (!req.user) {
-      res.status(401).json({ message: 'Not authenticated' });
-      return;
-    }
-
-    const { category_id, start_date, end_date } = req.query as ExpenseQueryParams;
-
-    let sql = `
-      SELECT e.date, e.description, e.amount, c.name as category_name
-      FROM expenses e
-      JOIN categories c ON e.category_id = c.id
-      WHERE e.user_id = ?
-    `;
-    const params: any[] = [req.user.id];
-
-    if (category_id) {
-      sql += ' AND e.category_id = ?';
-      params.push(parseInt(category_id));
-    }
-
-    if (start_date) {
-      sql += ' AND e.date >= ?';
-      params.push(start_date);
-    }
-
-    if (end_date) {
-      sql += ' AND e.date <= ?';
-      params.push(end_date);
-    }
-
-    sql += ' ORDER BY e.date DESC';
-
-    const expenses = await query<ExpenseWithCategory>(sql, params);
-
-    // Calculate totals
-    const total = expenses.reduce((sum, expense) => sum + expense.amount, 0);
-
-    // Generate simple HTML that can be converted to PDF client-side
-    const html = `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>Expense Report</title>
-          <style>
-            body { font-family: Arial, sans-serif; margin: 20px; }
-            h1 { color: #333; }
-            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-            th, td { padding: 10px; text-align: left; border-bottom: 1px solid #ddd; }
-            th { background-color: #f5f5f5; font-weight: bold; }
-            .total { font-weight: bold; font-size: 1.2em; margin-top: 20px; }
-          </style>
-        </head>
-        <body>
-          <h1>Expense Report</h1>
-          <p>Generated: ${new Date().toLocaleDateString()}</p>
-          <table>
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Description</th>
-                <th>Category</th>
-                <th>Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${expenses
-                .map(
-                  (expense) => `
-                <tr>
-                  <td>${expense.date}</td>
-                  <td>${expense.description}</td>
-                  <td>${expense.category_name}</td>
-                  <td>$${expense.amount.toFixed(2)}</td>
-                </tr>
-              `
-                )
-                .join('')}
-            </tbody>
-          </table>
-          <div class="total">Total: $${total.toFixed(2)}</div>
-        </body>
-      </html>
-    `;
-
-    res.setHeader('Content-Type', 'text/html');
-    res.send(html);
-
-    logger.info('PDF export completed:', { userId: req.user.id, count: expenses.length });
+    // For now, return a simple response
+    // In production, you'd use a library like pdfkit or puppeteer
+    res.json({ message: 'PDF export endpoint - implementation pending' });
   } catch (error) {
-    logger.error('PDF export error:', error);
-    res.status(500).json({ message: 'Error exporting to PDF' });
+    console.error('Export PDF error:', error);
+    res.status(500).json({ error: 'Failed to export PDF' });
   }
 });
 
