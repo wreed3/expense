@@ -1,7 +1,47 @@
 import Database from 'better-sqlite3';
 import logger from '../utils/logger.js';
 import { dbConfig } from '../config.js';
-import type { Expense, Category, Budget, User } from '../../src/types/index.js';
+
+// Define types locally since we can't import from src
+export interface User {
+  id: number;
+  email: string;
+  password: string;
+  name: string;
+  createdAt: string;
+}
+
+export interface Category {
+  id: number;
+  userId: number;
+  name: string;
+  color: string;
+  icon?: string;
+  createdAt: string;
+}
+
+export interface Expense {
+  id: number;
+  userId: number;
+  amount: number;
+  categoryId: number;
+  description?: string;
+  date: string;
+  receiptPath?: string;
+  createdAt: string;
+  categoryName?: string;
+  categoryColor?: string;
+}
+
+export interface Budget {
+  id: number;
+  userId: number;
+  categoryId: number;
+  amount: number;
+  period: string;
+  startDate: string;
+  createdAt: string;
+}
 
 let db: Database.Database;
 
@@ -51,7 +91,7 @@ export function getExpenses(userId: number): Expense[] {
   return stmt.all(userId) as Expense[];
 }
 
-export function createExpense(expense: Omit<Expense, 'id'>): Expense {
+export function createExpense(expense: Omit<Expense, 'id' | 'createdAt'>): Expense {
   const stmt = db.prepare(`
     INSERT INTO expenses (user_id, amount, category_id, description, date, receipt_path)
     VALUES (?, ?, ?, ?, ?, ?)
@@ -62,7 +102,7 @@ export function createExpense(expense: Omit<Expense, 'id'>): Expense {
     expense.categoryId,
     expense.description,
     expense.date,
-    expense.receiptPath || null
+    expense.receiptPath
   );
   return getExpenseById(result.lastInsertRowid as number)!;
 }
@@ -123,9 +163,12 @@ export function getCategories(userId: number): Category[] {
   return stmt.all(userId) as Category[];
 }
 
-export function createCategory(category: Omit<Category, 'id'>): Category {
-  const stmt = db.prepare('INSERT INTO categories (user_id, name, color, icon) VALUES (?, ?, ?, ?)');
-  const result = stmt.run(category.userId, category.name, category.color, category.icon || null);
+export function createCategory(category: Omit<Category, 'id' | 'createdAt'>): Category {
+  const stmt = db.prepare(`
+    INSERT INTO categories (user_id, name, color, icon)
+    VALUES (?, ?, ?, ?)
+  `);
+  const result = stmt.run(category.userId, category.name, category.color, category.icon);
   return getCategoryById(result.lastInsertRowid as number)!;
 }
 
@@ -168,16 +211,11 @@ export function deleteCategory(id: number): void {
 
 // Budget operations
 export function getBudgets(userId: number): Budget[] {
-  const stmt = db.prepare(`
-    SELECT b.*, c.name as categoryName
-    FROM budgets b
-    LEFT JOIN categories c ON b.category_id = c.id
-    WHERE b.user_id = ?
-  `);
+  const stmt = db.prepare('SELECT * FROM budgets WHERE user_id = ? ORDER BY start_date DESC');
   return stmt.all(userId) as Budget[];
 }
 
-export function createBudget(budget: Omit<Budget, 'id'>): Budget {
+export function createBudget(budget: Omit<Budget, 'id' | 'createdAt'>): Budget {
   const stmt = db.prepare(`
     INSERT INTO budgets (user_id, category_id, amount, period, start_date)
     VALUES (?, ?, ?, ?, ?)
@@ -193,12 +231,7 @@ export function createBudget(budget: Omit<Budget, 'id'>): Budget {
 }
 
 export function getBudgetById(id: number): Budget | undefined {
-  const stmt = db.prepare(`
-    SELECT b.*, c.name as categoryName
-    FROM budgets b
-    LEFT JOIN categories c ON b.category_id = c.id
-    WHERE b.id = ?
-  `);
+  const stmt = db.prepare('SELECT * FROM budgets WHERE id = ?');
   return stmt.get(id) as Budget | undefined;
 }
 
