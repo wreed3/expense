@@ -1,35 +1,46 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import { config } from '../config.js';
-import { logger } from '../logger.js';
+import { config } from '../config';
+import { db } from '../db';
 
-export interface AuthRequest extends Request {
-  userId?: number;
-  userEmail?: string;
+declare global {
+  namespace Express {
+    interface Request {
+      user?: {
+        id: number;
+        email: string;
+        name: string;
+      };
+    }
+  }
 }
 
-export const authenticateToken = (
-  req: AuthRequest,
-  res: Response,
-  next: NextFunction
-) => {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-
-  if (!token) {
-    return res.status(401).json({ error: 'Access token required' });
-  }
-
+export function authenticate(req: Request, res: Response, next: NextFunction) {
   try {
-    const decoded = jwt.verify(token, config.jwtSecret) as {
-      userId: number;
-      email: string;
-    };
-    req.userId = decoded.userId;
-    req.userEmail = decoded.email;
+    const authHeader = req.headers.authorization;
+    
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ message: 'No token provided' });
+    }
+    
+    const token = authHeader.substring(7);
+    
+    const decoded = jwt.verify(token, config.jwtSecret) as { userId: number };
+    
+    const user = db.prepare(`
+      SELECT id, email, name FROM users WHERE id = ?
+    `).get(decoded.userId) as any;
+    
+    if (!user) {
+      return res.status(401).json({ message: 'Invalid token' });
+    }
+    
+    req.user = user;
     next();
   } catch (error) {
-    logger.warn('Invalid token attempt:', { token: token.substring(0, 20) });
-    return res.status(403).json({ error: 'Invalid or expired token' });
+    if (error instanceof jwt.JsonWebTokenError) {
+      return res.status(401).json({ message: 'Invalid token' });
+    }
+    next(error);
   }
-};
+}
