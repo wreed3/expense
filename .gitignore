@@ -7,6 +7,7 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Dependencies
 node_modules
 dist
 dist-ssr
@@ -23,29 +24,30 @@ dist-ssr
 *.sln
 *.sw?
 
-# Environment files
+# Environment variables
 .env
 .env.local
-.env.*.local
+.env.production
 
-# Database files
+# Database
 *.db
 *.db-journal
-test-*.db
 
-# Upload directory
+# Uploads
 uploads/*
 !uploads/.gitkeep
+
+# Build artifacts
+dist/
+build/
 
 # Test coverage
 coverage/
 .nyc_output/
 
-# Playwright
-/test-results/
-/playwright-report/
-/blob-report/
-/playwright/.cache/
-
-# Jest
-*.snap
+# Test files (ensure they don't interfere with build)
+**/__tests__/**
+**/*.test.ts
+**/*.test.tsx
+**/*.spec.ts
+**/*.spec.tsx

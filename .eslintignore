@@ -1,0 +1,17 @@
+# Build output
+dist/
+build/
+
+# Dependencies
+node_modules/
+
+# Test files
+**/__tests__/**
+**/*.test.ts
+**/*.test.tsx
+**/*.spec.ts
+**/*.spec.tsx
+
+# Configuration files
+*.config.js
+*.config.ts
