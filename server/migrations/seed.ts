@@ -1,124 +1,160 @@
+import { fileURLToPath } from 'url';
+import path from 'path';
+import Database from 'better-sqlite3';
+import { Pool } from 'pg';
 import bcrypt from 'bcrypt';
-import { getDatabase, initializeDatabase } from '../database/index.js';
-import { logger } from '../utils/logger.js';
+import dotenv from 'dotenv';
 
-async function seedDatabase() {
+dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+type DatabaseConnection = Database.Database | Pool;
+
+interface SeedUser {
+  email: string;
+  password: string;
+  name: string;
+}
+
+interface SeedCategory {
+  name: string;
+  color: string;
+  icon: string;
+}
+
+interface SeedExpense {
+  amount: number;
+  description: string;
+  date: string;
+  categoryIndex: number;
+}
+
+async function seedDatabase(): Promise<void> {
+  const DB_TYPE = process.env.DB_TYPE || 'sqlite';
+  let db: DatabaseConnection;
+  const isPostgres = DB_TYPE === 'postgres';
+
+  // Initialize database connection
+  if (isPostgres) {
+    db = new Pool({
+      host: process.env.DB_HOST || 'localhost',
+      port: parseInt(process.env.DB_PORT || '5432', 10),
+      database: process.env.DB_NAME || 'expense_tracker',
+      user: process.env.DB_USER || 'postgres',
+      password: process.env.DB_PASSWORD || '',
+    });
+    console.log('Connected to PostgreSQL database');
+  } else {
+    const dbPath = process.env.DB_PATH || path.join(__dirname, '../../expenses.db');
+    db = new Database(dbPath);
+    (db as Database.Database).pragma('journal_mode = WAL');
+    console.log('Connected to SQLite database');
+  }
+
   try {
-    logger.info('Starting database seeding...');
-    await initializeDatabase();
-
-    const db = getDatabase();
+    console.log('Starting database seed...');
 
     // Create demo user
-    const hashedPassword = await bcrypt.hash('demo123', 10);
-    const userResult = db
-      .prepare(
-        'INSERT INTO users (email, password, name) VALUES (?, ?, ?) ON CONFLICT(email) DO NOTHING'
-      )
-      .run('demo@example.com', hashedPassword, 'Demo User');
+    const demoUser: SeedUser = {
+      email: 'demo@example.com',
+      password: 'demo123',
+      name: 'Demo User',
+    };
 
-    const userId = userResult.lastInsertRowid || 1;
+    const hashedPassword = await bcrypt.hash(demoUser.password, 10);
 
-    // Create default categories
-    const categories = [
-      { name: 'Food & Dining', color: '#EF4444', icon: 'utensils' },
-      { name: 'Transportation', color: '#3B82F6', icon: 'car' },
-      { name: 'Shopping', color: '#8B5CF6', icon: 'shopping-bag' },
-      { name: 'Entertainment', color: '#EC4899', icon: 'film' },
-      { name: 'Bills & Utilities', color: '#F59E0B', icon: 'receipt' },
-      { name: 'Healthcare', color: '#10B981', icon: 'heart' },
-      { name: 'Other', color: '#6B7280', icon: 'folder' },
+    let userId: number;
+
+    if (isPostgres) {
+      const pool = db as Pool;
+      const result = await pool.query(
+        'INSERT INTO users (email, password, name) VALUES ($1, $2, $3) RETURNING id',
+        [demoUser.email, hashedPassword, demoUser.name]
+      );
+      userId = result.rows[0].id;
+    } else {
+      const sqlite = db as Database.Database;
+      const stmt = sqlite.prepare('INSERT INTO users (email, password, name) VALUES (?, ?, ?)');
+      const info = stmt.run(demoUser.email, hashedPassword, demoUser.name);
+      userId = Number(info.lastInsertRowid);
+    }
+
+    console.log(`✓ Created demo user (ID: ${userId})`);
+
+    // Create categories
+    const categories: SeedCategory[] = [
+      { name: 'Food & Dining', color: '#ef4444', icon: '🍔' },
+      { name: 'Transportation', color: '#3b82f6', icon: '🚗' },
+      { name: 'Shopping', color: '#8b5cf6', icon: '🛍️' },
+      { name: 'Entertainment', color: '#ec4899', icon: '🎬' },
+      { name: 'Bills & Utilities', color: '#f59e0b', icon: '💡' },
+      { name: 'Healthcare', color: '#10b981', icon: '🏥' },
     ];
 
-    const categoryStmt = db.prepare(
-      'INSERT INTO categories (user_id, name, color, icon) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, name) DO NOTHING'
-    );
+    const categoryIds: number[] = [];
 
     for (const category of categories) {
-      categoryStmt.run(userId, category.name, category.color, category.icon);
+      if (isPostgres) {
+        const pool = db as Pool;
+        const result = await pool.query(
+          'INSERT INTO categories (user_id, name, color, icon) VALUES ($1, $2, $3, $4) RETURNING id',
+          [userId, category.name, category.color, category.icon]
+        );
+        categoryIds.push(result.rows[0].id);
+      } else {
+        const sqlite = db as Database.Database;
+        const stmt = sqlite.prepare(
+          'INSERT INTO categories (user_id, name, color, icon) VALUES (?, ?, ?, ?)'
+        );
+        const info = stmt.run(userId, category.name, category.color, category.icon);
+        categoryIds.push(Number(info.lastInsertRowid));
+      }
     }
 
-    // Get category IDs
-    const categoryIds = db
-      .prepare('SELECT id, name FROM categories WHERE user_id = ?')
-      .all(userId) as Array<{ id: number; name: string }>;
+    console.log(`✓ Created ${categories.length} categories`);
 
     // Create sample expenses
-    const expenseStmt = db.prepare(
-      'INSERT INTO expenses (user_id, category_id, amount, description, date) VALUES (?, ?, ?, ?, ?)'
-    );
-
-    const today = new Date();
-    const thisMonth = today.toISOString().slice(0, 7);
-
-    const sampleExpenses = [
-      {
-        category: 'Food & Dining',
-        amount: 45.5,
-        description: 'Grocery shopping',
-        daysAgo: 2,
-      },
-      {
-        category: 'Transportation',
-        amount: 60.0,
-        description: 'Gas station',
-        daysAgo: 5,
-      },
-      {
-        category: 'Shopping',
-        amount: 120.0,
-        description: 'Clothing store',
-        daysAgo: 7,
-      },
-      {
-        category: 'Entertainment',
-        amount: 25.0,
-        description: 'Movie tickets',
-        daysAgo: 10,
-      },
-      {
-        category: 'Bills & Utilities',
-        amount: 150.0,
-        description: 'Electric bill',
-        daysAgo: 15,
-      },
+    const expenses: SeedExpense[] = [
+      { amount: 45.50, description: 'Grocery shopping', date: '2024-01-15', categoryIndex: 0 },
+      { amount: 12.00, description: 'Gas station', date: '2024-01-16', categoryIndex: 1 },
+      { amount: 89.99, description: 'New shoes', date: '2024-01-17', categoryIndex: 2 },
+      { amount: 25.00, description: 'Movie tickets', date: '2024-01-18', categoryIndex: 3 },
+      { amount: 120.00, description: 'Electric bill', date: '2024-01-19', categoryIndex: 4 },
+      { amount: 35.00, description: 'Pharmacy', date: '2024-01-20', categoryIndex: 5 },
     ];
 
-    for (const expense of sampleExpenses) {
-      const category = categoryIds.find((c) => c.name === expense.category);
-      if (category) {
-        const expenseDate = new Date(today);
-        expenseDate.setDate(expenseDate.getDate() - expense.daysAgo);
-        expenseStmt.run(
-          userId,
-          category.id,
-          expense.amount,
-          expense.description,
-          expenseDate.toISOString().slice(0, 10)
+    for (const expense of expenses) {
+      const categoryId = categoryIds[expense.categoryIndex];
+      if (isPostgres) {
+        const pool = db as Pool;
+        await pool.query(
+          'INSERT INTO expenses (user_id, amount, description, category_id, date) VALUES ($1, $2, $3, $4, $5)',
+          [userId, expense.amount, expense.description, categoryId, expense.date]
         );
+      } else {
+        const sqlite = db as Database.Database;
+        const stmt = sqlite.prepare(
+          'INSERT INTO expenses (user_id, amount, description, category_id, date) VALUES (?, ?, ?, ?, ?)'
+        );
+        stmt.run(userId, expense.amount, expense.description, categoryId, expense.date);
       }
     }
 
-    // Create sample budgets
-    const budgetStmt = db.prepare(
-      'INSERT INTO budgets (user_id, category_id, amount, month) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, category_id, month) DO NOTHING'
-    );
-
-    for (const category of categoryIds) {
-      if (category.name !== 'Other') {
-        budgetStmt.run(userId, category.id, 500, thisMonth);
-      }
-    }
-
-    logger.info('Database seeded successfully');
-    logger.info('Demo user credentials:');
-    logger.info('  Email: demo@example.com');
-    logger.info('  Password: demo123');
-
-    process.exit(0);
+    console.log(`✓ Created ${expenses.length} sample expenses`);
+    console.log('\nDatabase seeded successfully!');
+    console.log(`\nDemo credentials:\nEmail: ${demoUser.email}\nPassword: ${demoUser.password}`);
   } catch (error) {
-    logger.error('Seeding failed:', error);
+    console.error('Seed failed:', error);
     process.exit(1);
+  } finally {
+    // Close database connection
+    if ('close' in db) {
+      (db as Database.Database).close();
+    } else {
+      await (db as Pool).end();
+    }
   }
 }
 
