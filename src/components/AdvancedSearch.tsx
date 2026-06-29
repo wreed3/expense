@@ -1,119 +1,132 @@
 import { useState } from 'react';
-import { Search, X } from 'lucide-react';
 import { useExpenseStore } from '../stores/expenseStore';
 import { useCategoryStore } from '../stores/categoryStore';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from './ui/select';
+import { Select } from './ui/select';
 
 export function AdvancedSearch() {
-  const filters = useExpenseStore((state) => state.filters);
-  const setFilters = useExpenseStore((state) => state.setFilters);
-  const categories = useCategoryStore((state) => state.categories);
-  
-  const [localFilters, setLocalFilters] = useState(filters);
+  const { filters, setFilters } = useExpenseStore();
+  const { categories } = useCategoryStore();
+  const [localFilters, setLocalFilters] = useState({
+    search: filters.search || '',
+    categoryId: filters.categoryId?.toString() || '',
+    minAmount: filters.minAmount?.toString() || '',
+    maxAmount: filters.maxAmount?.toString() || '',
+    startDate: filters.startDate || '',
+    endDate: filters.endDate || '',
+  });
 
-  const handleApply = () => {
-    setFilters(localFilters);
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setFilters({
+      search: localFilters.search || undefined,
+      categoryId: localFilters.categoryId ? parseInt(localFilters.categoryId) : undefined,
+      minAmount: localFilters.minAmount ? parseFloat(localFilters.minAmount) : undefined,
+      maxAmount: localFilters.maxAmount ? parseFloat(localFilters.maxAmount) : undefined,
+      startDate: localFilters.startDate || undefined,
+      endDate: localFilters.endDate || undefined,
+    });
   };
 
   const handleReset = () => {
-    const emptyFilters = {};
+    const emptyFilters = {
+      search: '',
+      categoryId: '',
+      minAmount: '',
+      maxAmount: '',
+      startDate: '',
+      endDate: '',
+    };
     setLocalFilters(emptyFilters);
-    setFilters(emptyFilters);
+    setFilters({});
   };
 
   return (
-    <div className="bg-white p-6 rounded-lg shadow-sm space-y-4">
-      <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold flex items-center gap-2">
-          <Search className="h-5 w-5" />
-          Advanced Search
-        </h3>
-        <Button variant="ghost" size="sm" onClick={handleReset}>
-          <X className="h-4 w-4 mr-1" />
-          Clear
-        </Button>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <div className="bg-white p-6 rounded-lg shadow-md">
+      <h3 className="text-lg font-semibold mb-4">Advanced Search</h3>
+      <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <Label htmlFor="search">Search</Label>
+          <Label htmlFor="search">Search Description</Label>
           <Input
             id="search"
-            placeholder="Search descriptions..."
-            value={localFilters.search || ''}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => 
-              setLocalFilters({ ...localFilters, search: e.target.value })
-            }
+            type="text"
+            value={localFilters.search}
+            onChange={(e) => setLocalFilters({ ...localFilters, search: e.target.value })}
+            placeholder="Search expenses..."
           />
         </div>
 
         <div>
           <Label htmlFor="category">Category</Label>
           <Select
-            value={localFilters.categoryId?.toString() || 'all'}
-            onValueChange={(value: string) =>
-              setLocalFilters({
-                ...localFilters,
-                categoryId: value === 'all' ? undefined : parseInt(value),
-              })
-            }
+            id="category"
+            value={localFilters.categoryId}
+            onChange={(value) => setLocalFilters({ ...localFilters, categoryId: value })}
           >
-            <SelectTrigger id="category">
-              <SelectValue placeholder="All categories" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All categories</SelectItem>
-              {categories.map((category) => (
-                <SelectItem key={category.id} value={category.id.toString()}>
-                  {category.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
+            <option value="">All Categories</option>
+            {categories.map((category) => (
+              <option key={category.id} value={category.id}>
+                {category.name}
+              </option>
+            ))}
           </Select>
         </div>
 
-        <div>
-          <Label htmlFor="startDate">Start Date</Label>
-          <Input
-            id="startDate"
-            type="date"
-            value={localFilters.startDate || ''}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-              setLocalFilters({ ...localFilters, startDate: e.target.value })
-            }
-          />
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <Label htmlFor="minAmount">Min Amount</Label>
+            <Input
+              id="minAmount"
+              type="number"
+              step="0.01"
+              value={localFilters.minAmount}
+              onChange={(e) => setLocalFilters({ ...localFilters, minAmount: e.target.value })}
+              placeholder="0.00"
+            />
+          </div>
+          <div>
+            <Label htmlFor="maxAmount">Max Amount</Label>
+            <Input
+              id="maxAmount"
+              type="number"
+              step="0.01"
+              value={localFilters.maxAmount}
+              onChange={(e) => setLocalFilters({ ...localFilters, maxAmount: e.target.value })}
+              placeholder="0.00"
+            />
+          </div>
         </div>
 
-        <div>
-          <Label htmlFor="endDate">End Date</Label>
-          <Input
-            id="endDate"
-            type="date"
-            value={localFilters.endDate || ''}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-              setLocalFilters({ ...localFilters, endDate: e.target.value })
-            }
-          />
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <Label htmlFor="startDate">Start Date</Label>
+            <Input
+              id="startDate"
+              type="date"
+              value={localFilters.startDate}
+              onChange={(e) => setLocalFilters({ ...localFilters, startDate: e.target.value })}
+            />
+          </div>
+          <div>
+            <Label htmlFor="endDate">End Date</Label>
+            <Input
+              id="endDate"
+              type="date"
+              value={localFilters.endDate}
+              onChange={(e) => setLocalFilters({ ...localFilters, endDate: e.target.value })}
+            />
+          </div>
         </div>
-      </div>
 
-      <div className="flex gap-2">
-        <Button onClick={handleApply} className="flex-1">
-          Apply Filters
-        </Button>
-        <Button variant="outline" onClick={handleReset}>
-          Reset
-        </Button>
-      </div>
+        <div className="flex gap-2">
+          <Button type="submit">Apply Filters</Button>
+          <Button type="button" onClick={handleReset} variant="outline">
+            Reset
+          </Button>
+        </div>
+      </form>
     </div>
   );
 }
