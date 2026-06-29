@@ -1,226 +1,239 @@
-import { useState, useEffect } from 'react';
-import { Plus, Pencil, Trash2, AlertCircle } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { useBudgetStore } from '../stores/budgetStore';
 import { useCategoryStore } from '../stores/categoryStore';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from './ui/select';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from './ui/dialog';
+import { Select } from './ui/select';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from './ui/dialog';
 import toast from 'react-hot-toast';
 
 export function BudgetManager() {
-  const { budgets, fetchBudgets, addBudget, updateBudget, deleteBudget } = useBudgetStore();
-  const { categories } = useCategoryStore();
-  const [isOpen, setIsOpen] = useState(false);
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [categoryId, setCategoryId] = useState<string>('');
-  const [amount, setAmount] = useState('');
-  const [period, setPeriod] = useState<'monthly' | 'yearly'>('monthly');
+  const { budgets, isLoading, fetchBudgets, createBudget, updateBudget, deleteBudget } = useBudgetStore();
+  const { categories, fetchCategories } = useCategoryStore();
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [editingBudget, setEditingBudget] = useState<number | null>(null);
+  const [formData, setFormData] = useState({
+    categoryId: '',
+    amount: '',
+    month: new Date().toISOString().slice(0, 7), // YYYY-MM format
+  });
 
   useEffect(() => {
     fetchBudgets();
-  }, [fetchBudgets]);
+    fetchCategories();
+  }, [fetchBudgets, fetchCategories]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     try {
-      const budgetData = {
-        categoryId: parseInt(categoryId),
-        amount: parseFloat(amount),
-        period,
-      };
-
-      if (editingId) {
-        await updateBudget(editingId, budgetData);
-        toast.success('Budget updated');
+      if (editingBudget) {
+        await updateBudget(editingBudget, {
+          categoryId: parseInt(formData.categoryId),
+          amount: parseFloat(formData.amount),
+          month: formData.month,
+        });
+        toast.success('Budget updated successfully');
       } else {
-        await addBudget(budgetData);
-        toast.success('Budget created');
+        await createBudget({
+          categoryId: parseInt(formData.categoryId),
+          amount: parseFloat(formData.amount),
+          month: formData.month,
+        });
+        toast.success('Budget created successfully');
       }
-      handleClose();
+      
+      setIsDialogOpen(false);
+      resetForm();
     } catch (error) {
-      toast.error('Failed to save budget');
+      toast.error(error instanceof Error ? error.message : 'Failed to save budget');
     }
   };
 
-  const handleEdit = (id: number, budget: any) => {
-    setEditingId(id);
-    setCategoryId(budget.categoryId.toString());
-    setAmount(budget.amount.toString());
-    setPeriod(budget.period);
-    setIsOpen(true);
+  const handleEdit = (budgetId: number) => {
+    const budget = budgets.find(b => b.id === budgetId);
+    if (budget) {
+      setEditingBudget(budgetId);
+      setFormData({
+        categoryId: budget.categoryId.toString(),
+        amount: budget.amount.toString(),
+        month: budget.month,
+      });
+      setIsDialogOpen(true);
+    }
   };
 
-  const handleDelete = async (id: number) => {
-    if (confirm('Are you sure you want to delete this budget?')) {
+  const handleDelete = async (budgetId: number) => {
+    if (window.confirm('Are you sure you want to delete this budget?')) {
       try {
-        await deleteBudget(id);
-        toast.success('Budget deleted');
+        await deleteBudget(budgetId);
+        toast.success('Budget deleted successfully');
       } catch (error) {
-        toast.error('Failed to delete budget');
+        toast.error(error instanceof Error ? error.message : 'Failed to delete budget');
       }
     }
   };
 
-  const handleClose = () => {
-    setIsOpen(false);
-    setEditingId(null);
-    setCategoryId('');
-    setAmount('');
-    setPeriod('monthly');
+  const resetForm = () => {
+    setFormData({
+      categoryId: '',
+      amount: '',
+      month: new Date().toISOString().slice(0, 7),
+    });
+    setEditingBudget(null);
   };
 
-  const getCategoryName = (catId: number) => {
-    return categories.find((c) => c.id === catId)?.name || 'Unknown';
+  const getPercentageUsed = (budget: typeof budgets[0]) => {
+    if (!budget.spent) return 0;
+    return (budget.spent / budget.amount) * 100;
   };
 
-  const getSpentPercentage = (budget: any) => {
-    return budget.amount > 0 ? (budget.spent / budget.amount) * 100 : 0;
+  const getProgressColor = (percentage: number) => {
+    if (percentage >= 100) return 'bg-red-500';
+    if (percentage >= 80) return 'bg-yellow-500';
+    return 'bg-green-500';
   };
+
+  if (isLoading) {
+    return <div className="flex justify-center p-8">Loading budgets...</div>;
+  }
 
   return (
-    <div className="bg-white p-6 rounded-lg shadow-sm">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold">Budgets</h3>
-        <Dialog open={isOpen} onOpenChange={setIsOpen}>
-          <DialogTrigger asChild>
-            <Button size="sm">
-              <Plus className="h-4 w-4 mr-1" />
-              Add
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>{editingId ? 'Edit Budget' : 'New Budget'}</DialogTitle>
-              <DialogDescription>
-                {editingId ? 'Update the budget details' : 'Set a budget limit for a category'}
-              </DialogDescription>
-            </DialogHeader>
-            <form onSubmit={handleSubmit}>
-              <div className="space-y-4">
-                <div>
-                  <Label htmlFor="category">Category</Label>
-                  <Select value={categoryId} onValueChange={setCategoryId} required>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select category" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {categories.map((cat) => (
-                        <SelectItem key={cat.id} value={cat.id.toString()}>
-                          {cat.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label htmlFor="amount">Amount</Label>
-                  <Input
-                    id="amount"
-                    type="number"
-                    step="0.01"
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                    placeholder="0.00"
-                    required
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="period">Period</Label>
-                  <Select value={period} onValueChange={(val) => setPeriod(val as 'monthly' | 'yearly')}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="monthly">Monthly</SelectItem>
-                      <SelectItem value="yearly">Yearly</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <DialogFooter className="mt-6">
-                <Button type="button" variant="outline" onClick={handleClose}>
-                  Cancel
-                </Button>
-                <Button type="submit">
-                  {editingId ? 'Update' : 'Create'}
-                </Button>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
+    <div className="space-y-6">
+      <div className="flex justify-between items-center">
+        <h2 className="text-2xl font-bold">Budget Management</h2>
+        <Button onClick={() => setIsDialogOpen(true)}>
+          Add Budget
+        </Button>
       </div>
 
-      <div className="space-y-3">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         {budgets.map((budget) => {
-          const percentage = getSpentPercentage(budget);
-          const isOverBudget = percentage > 100;
+          const category = categories.find(c => c.id === budget.categoryId);
+          const percentageUsed = getPercentageUsed(budget);
           
           return (
-            <div
-              key={budget.id}
-              className="p-4 rounded-lg border hover:bg-gray-50"
-            >
-              <div className="flex items-start justify-between mb-2">
+            <div key={budget.id} className="border rounded-lg p-4 space-y-3">
+              <div className="flex justify-between items-start">
                 <div>
-                  <div className="font-medium">{getCategoryName(budget.categoryId)}</div>
-                  <div className="text-sm text-gray-500">
-                    ${budget.spent.toFixed(2)} / ${budget.amount.toFixed(2)}
-                  </div>
+                  <h3 className="font-semibold text-lg">{category?.name || 'Unknown'}</h3>
+                  <p className="text-sm text-gray-500">{budget.month}</p>
                 </div>
-                <div className="flex gap-1">
+                <div className="flex gap-2">
                   <Button
-                    variant="ghost"
+                    variant="outline"
                     size="sm"
-                    onClick={() => handleEdit(budget.id, budget)}
+                    onClick={() => handleEdit(budget.id)}
                   >
-                    <Pencil className="h-4 w-4" />
+                    Edit
                   </Button>
                   <Button
-                    variant="ghost"
+                    variant="outline"
                     size="sm"
                     onClick={() => handleDelete(budget.id)}
                   >
-                    <Trash2 className="h-4 w-4" />
+                    Delete
                   </Button>
                 </div>
               </div>
-              
-              <div className="relative w-full h-2 bg-gray-200 rounded-full overflow-hidden">
-                <div
-                  className={`absolute top-0 left-0 h-full transition-all ${
-                    isOverBudget ? 'bg-red-500' : 'bg-green-500'
-                  }`}
-                  style={{ width: `${Math.min(percentage, 100)}%` }}
-                />
-              </div>
-              
-              {isOverBudget && (
-                <div className="flex items-center gap-1 mt-2 text-sm text-red-600">
-                  <AlertCircle className="h-4 w-4" />
-                  <span>Over budget by ${(budget.spent - budget.amount).toFixed(2)}</span>
+
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span>Spent: ${budget.spent?.toFixed(2) || '0.00'}</span>
+                  <span>Budget: ${budget.amount.toFixed(2)}</span>
                 </div>
-              )}
+                
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div
+                    className={`h-2 rounded-full transition-all ${getProgressColor(percentageUsed)}`}
+                    style={{ width: `${Math.min(percentageUsed, 100)}%` }}
+                  />
+                </div>
+                
+                <p className="text-sm text-center">
+                  {percentageUsed.toFixed(1)}% used
+                </p>
+              </div>
             </div>
           );
         })}
       </div>
+
+      {budgets.length === 0 && (
+        <div className="text-center py-12 text-gray-500">
+          No budgets set. Click "Add Budget" to create your first budget.
+        </div>
+      )}
+
+      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {editingBudget ? 'Edit Budget' : 'Add New Budget'}
+            </DialogTitle>
+          </DialogHeader>
+
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <Label htmlFor="category">Category</Label>
+              <Select
+                id="category"
+                value={formData.categoryId}
+                onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })}
+                required
+              >
+                <option value="">Select a category</option>
+                {categories.map((category) => (
+                  <option key={category.id} value={category.id}>
+                    {category.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+
+            <div>
+              <Label htmlFor="amount">Budget Amount</Label>
+              <Input
+                id="amount"
+                type="number"
+                step="0.01"
+                min="0"
+                value={formData.amount}
+                onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
+                required
+              />
+            </div>
+
+            <div>
+              <Label htmlFor="month">Month</Label>
+              <Input
+                id="month"
+                type="month"
+                value={formData.month}
+                onChange={(e) => setFormData({ ...formData, month: e.target.value })}
+                required
+              />
+            </div>
+
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setIsDialogOpen(false);
+                  resetForm();
+                }}
+              >
+                Cancel
+              </Button>
+              <Button type="submit">
+                {editingBudget ? 'Update' : 'Create'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
