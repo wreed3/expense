@@ -1,40 +1,47 @@
-import React, { useEffect } from 'react';
-import { useCurrencyStore } from '../stores/currencyStore';
+import { useState } from 'react';
+import { DollarSign } from 'lucide-react';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from './ui/select';
+
+const currencies = [
+  { code: 'USD', symbol: '$', name: 'US Dollar' },
+  { code: 'EUR', symbol: '€', name: 'Euro' },
+  { code: 'GBP', symbol: '£', name: 'British Pound' },
+  { code: 'JPY', symbol: '¥', name: 'Japanese Yen' },
+  { code: 'CAD', symbol: '$', name: 'Canadian Dollar' },
+  { code: 'AUD', symbol: '$', name: 'Australian Dollar' },
+];
 
 interface CurrencySelectorProps {
   value: string;
-  onChange: (code: string) => void;
-  className?: string;
+  onChange: (currency: string) => void;
 }
 
-export function CurrencySelector({ value, onChange, className = '' }: CurrencySelectorProps) {
-  const { currencies, fetchCurrencies, isLoading } = useCurrencyStore();
-
-  useEffect(() => {
-    if (currencies.length === 0) {
-      fetchCurrencies();
-    }
-  }, [currencies.length, fetchCurrencies]);
-
-  if (isLoading) {
-    return (
-      <select className={`input ${className}`} disabled>
-        <option>Loading...</option>
-      </select>
-    );
-  }
+export function CurrencySelector({ value, onChange }: CurrencySelectorProps) {
+  const selectedCurrency = currencies.find((c) => c.code === value) || currencies[0];
 
   return (
-    <select
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className={`input ${className}`}
-    >
-      {currencies.map((currency) => (
-        <option key={currency.code} value={currency.code}>
-          {currency.code} - {currency.name} ({currency.symbol})
-        </option>
-      ))}
-    </select>
+    <div className="flex items-center gap-2">
+      <DollarSign className="h-4 w-4 text-gray-500" />
+      <Select value={value} onValueChange={onChange}>
+        <SelectTrigger className="w-[180px]">
+          <SelectValue>
+            {selectedCurrency.symbol} {selectedCurrency.code}
+          </SelectValue>
+        </SelectTrigger>
+        <SelectContent>
+          {currencies.map((currency) => (
+            <SelectItem key={currency.code} value={currency.code}>
+              {currency.symbol} {currency.code} - {currency.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
   );
 }
