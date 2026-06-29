@@ -1,11 +1,22 @@
 import { create } from 'zustand';
 import type { Expense } from '../types';
 
+interface ExpenseFilters {
+  startDate?: string;
+  endDate?: string;
+  categoryId?: number;
+  search?: string;
+  minAmount?: number;
+  maxAmount?: number;
+}
+
 interface ExpenseState {
   expenses: Expense[];
+  filters: ExpenseFilters;
   isLoading: boolean;
   error: string | null;
-  fetchExpenses: (filters?: { startDate?: string; endDate?: string; categoryId?: number }) => Promise<void>;
+  fetchExpenses: (filters?: ExpenseFilters) => Promise<void>;
+  setFilters: (filters: ExpenseFilters) => void;
   createExpense: (expense: Omit<Expense, 'id' | 'userId' | 'createdAt' | 'updatedAt'>) => Promise<void>;
   updateExpense: (id: number, expense: Partial<Omit<Expense, 'id' | 'userId' | 'createdAt' | 'updatedAt'>>) => Promise<void>;
   deleteExpense: (id: number) => Promise<void>;
@@ -13,16 +24,27 @@ interface ExpenseState {
 
 export const useExpenseStore = create<ExpenseState>((set, get) => ({
   expenses: [],
+  filters: {},
   isLoading: false,
   error: null,
+
+  setFilters: (filters) => {
+    set({ filters });
+    get().fetchExpenses(filters);
+  },
 
   fetchExpenses: async (filters) => {
     set({ isLoading: true, error: null });
     try {
       const params = new URLSearchParams();
-      if (filters?.startDate) params.append('startDate', filters.startDate);
-      if (filters?.endDate) params.append('endDate', filters.endDate);
-      if (filters?.categoryId) params.append('categoryId', filters.categoryId.toString());
+      const activeFilters = filters || get().filters;
+      
+      if (activeFilters.startDate) params.append('startDate', activeFilters.startDate);
+      if (activeFilters.endDate) params.append('endDate', activeFilters.endDate);
+      if (activeFilters.categoryId) params.append('categoryId', activeFilters.categoryId.toString());
+      if (activeFilters.search) params.append('search', activeFilters.search);
+      if (activeFilters.minAmount !== undefined) params.append('minAmount', activeFilters.minAmount.toString());
+      if (activeFilters.maxAmount !== undefined) params.append('maxAmount', activeFilters.maxAmount.toString());
 
       const response = await fetch(`/api/expenses?${params}`, {
         headers: {
@@ -60,11 +82,8 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
         throw new Error('Failed to create expense');
       }
 
-      const newExpense = await response.json();
-      set({ 
-        expenses: [...get().expenses, newExpense],
-        isLoading: false 
-      });
+      await get().fetchExpenses();
+      set({ isLoading: false });
     } catch (error) {
       set({ 
         error: error instanceof Error ? error.message : 'An error occurred',
@@ -90,11 +109,8 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
         throw new Error('Failed to update expense');
       }
 
-      const updatedExpense = await response.json();
-      set({ 
-        expenses: get().expenses.map(e => e.id === id ? updatedExpense : e),
-        isLoading: false 
-      });
+      await get().fetchExpenses();
+      set({ isLoading: false });
     } catch (error) {
       set({ 
         error: error instanceof Error ? error.message : 'An error occurred',
@@ -118,10 +134,8 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
         throw new Error('Failed to delete expense');
       }
 
-      set({ 
-        expenses: get().expenses.filter(e => e.id !== id),
-        isLoading: false 
-      });
+      await get().fetchExpenses();
+      set({ isLoading: false });
     } catch (error) {
       set({ 
         error: error instanceof Error ? error.message : 'An error occurred',
