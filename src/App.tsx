@@ -1,30 +1,66 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { useEffect } from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { Provider } from 'react-redux';
 import { Toaster } from 'react-hot-toast';
-import { useAuthStore } from './stores/authStore';
-import LoginPage from './components/auth/LoginPage';
-import RegisterPage from './components/auth/RegisterPage';
+import { store } from './store';
+import { useAppDispatch, useAppSelector } from './store/hooks';
+import { fetchCurrentUser } from './store/slices/authSlice';
+import Layout from './components/Layout';
+import Login from './components/Login';
+import Register from './components/Register';
 import Dashboard from './components/Dashboard';
+import ExpenseList from './components/ExpenseList';
+import ExpenseForm from './components/ExpenseForm';
+import Categories from './components/Categories';
+import Budgets from './components/Budgets';
+import Analytics from './components/Analytics';
 
-function PrivateRoute({ children }: { children: React.ReactNode }) {
-  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
-  return isAuthenticated ? <>{children}</> : <Navigate to="/login" />;
+function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, loading } = useAppSelector((state) => state.auth);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-lg">Loading...</div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return <>{children}</>;
 }
 
 function PublicRoute({ children }: { children: React.ReactNode }) {
-  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
-  return !isAuthenticated ? <>{children}</> : <Navigate to="/" />;
+  const { isAuthenticated } = useAppSelector((state) => state.auth);
+
+  if (isAuthenticated) {
+    return <Navigate to="/" replace />;
+  }
+
+  return <>{children}</>;
 }
 
-function App() {
+function AppRoutes() {
+  const dispatch = useAppDispatch();
+  const { token, isAuthenticated } = useAppSelector((state) => state.auth);
+
+  useEffect(() => {
+    if (token && !isAuthenticated) {
+      dispatch(fetchCurrentUser());
+    }
+  }, [dispatch, token, isAuthenticated]);
+
   return (
-    <BrowserRouter>
-      <Toaster position="top-right" />
+    <Router>
       <Routes>
         <Route
           path="/login"
           element={
             <PublicRoute>
-              <LoginPage />
+              <Login />
             </PublicRoute>
           }
         />
@@ -32,21 +68,58 @@ function App() {
           path="/register"
           element={
             <PublicRoute>
-              <RegisterPage />
+              <Register />
             </PublicRoute>
           }
         />
         <Route
           path="/"
           element={
-            <PrivateRoute>
-              <Dashboard />
-            </PrivateRoute>
+            <ProtectedRoute>
+              <Layout />
+            </ProtectedRoute>
           }
-        />
+        >
+          <Route index element={<Dashboard />} />
+          <Route path="expenses" element={<ExpenseList />} />
+          <Route path="expenses/new" element={<ExpenseForm />} />
+          <Route path="categories" element={<Categories />} />
+          <Route path="budgets" element={<Budgets />} />
+          <Route path="analytics" element={<Analytics />} />
+        </Route>
       </Routes>
-    </BrowserRouter>
+    </Router>
   );
 }
 
-export default App;
+export default function App() {
+  return (
+    <Provider store={store}>
+      <AppRoutes />
+      <Toaster
+        position="top-right"
+        toastOptions={{
+          duration: 3000,
+          style: {
+            background: '#363636',
+            color: '#fff',
+          },
+          success: {
+            duration: 3000,
+            iconTheme: {
+              primary: '#10B981',
+              secondary: '#fff',
+            },
+          },
+          error: {
+            duration: 4000,
+            iconTheme: {
+              primary: '#EF4444',
+              secondary: '#fff',
+            },
+          },
+        }}
+      />
+    </Provider>
+  );
+}
