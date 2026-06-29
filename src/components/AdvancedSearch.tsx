@@ -50,7 +50,9 @@ export function AdvancedSearch() {
             id="search"
             placeholder="Search descriptions..."
             value={localFilters.search || ''}
-            onChange={(e) => setLocalFilters({ ...localFilters, search: e.target.value })}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => 
+              setLocalFilters({ ...localFilters, search: e.target.value })
+            }
           />
         </div>
 
@@ -58,10 +60,10 @@ export function AdvancedSearch() {
           <Label htmlFor="category">Category</Label>
           <Select
             value={localFilters.categoryId?.toString() || 'all'}
-            onValueChange={(value) =>
+            onValueChange={(value: string) =>
               setLocalFilters({
                 ...localFilters,
-                categoryId: value === 'all' ? undefined : Number(value),
+                categoryId: value === 'all' ? undefined : parseInt(value),
               })
             }
           >
@@ -85,7 +87,9 @@ export function AdvancedSearch() {
             id="startDate"
             type="date"
             value={localFilters.startDate || ''}
-            onChange={(e) => setLocalFilters({ ...localFilters, startDate: e.target.value })}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+              setLocalFilters({ ...localFilters, startDate: e.target.value })
+            }
           />
         </div>
 
@@ -95,14 +99,21 @@ export function AdvancedSearch() {
             id="endDate"
             type="date"
             value={localFilters.endDate || ''}
-            onChange={(e) => setLocalFilters({ ...localFilters, endDate: e.target.value })}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+              setLocalFilters({ ...localFilters, endDate: e.target.value })
+            }
           />
         </div>
       </div>
 
-      <Button onClick={handleApply} className="w-full">
-        Apply Filters
-      </Button>
+      <div className="flex gap-2">
+        <Button onClick={handleApply} className="flex-1">
+          Apply Filters
+        </Button>
+        <Button variant="outline" onClick={handleReset}>
+          Reset
+        </Button>
+      </div>
     </div>
   );
 }
