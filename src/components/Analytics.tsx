@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAnalyticsStore } from '../stores/analyticsStore';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, LineChart, Line, XAxis, YAxis, CartesianGrid } from 'recharts';
-import { Button } from './ui/button';
 import { Select } from './ui/select';
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8', '#82CA9D'];
@@ -52,11 +51,19 @@ export function Analytics() {
         <div className="flex gap-2">
           <Select
             value={timePeriod}
-            onChange={(e) => setTimePeriod(e.target.value as 'month' | 'week' | 'year')}
+            onChange={(value) => setTimePeriod(value as 'month' | 'week' | 'year')}
           >
             <option value="week">This Week</option>
             <option value="month">This Month</option>
             <option value="year">This Year</option>
+          </Select>
+          <Select
+            value={trendMonths.toString()}
+            onChange={(value) => setTrendMonths(parseInt(value))}
+          >
+            <option value="3">3 Months</option>
+            <option value="6">6 Months</option>
+            <option value="12">12 Months</option>
           </Select>
         </div>
       </div>
@@ -64,24 +71,24 @@ export function Analytics() {
       {summary && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="bg-white p-6 rounded-lg shadow">
-            <h3 className="text-sm font-medium text-gray-500">Total Spent</h3>
-            <p className="text-2xl font-bold mt-2">${summary.totalSpent.toFixed(2)}</p>
+            <h3 className="text-lg font-semibold mb-2">Total Spent</h3>
+            <p className="text-3xl font-bold">${summary.totalSpent.toFixed(2)}</p>
           </div>
           <div className="bg-white p-6 rounded-lg shadow">
-            <h3 className="text-sm font-medium text-gray-500">Total Budget</h3>
-            <p className="text-2xl font-bold mt-2">${summary.budgetTotal.toFixed(2)}</p>
+            <h3 className="text-lg font-semibold mb-2">Budget Total</h3>
+            <p className="text-3xl font-bold">${summary.budgetTotal.toFixed(2)}</p>
           </div>
           <div className="bg-white p-6 rounded-lg shadow">
-            <h3 className="text-sm font-medium text-gray-500">Budget Used</h3>
-            <p className="text-2xl font-bold mt-2">{summary.percentageUsed.toFixed(1)}%</p>
+            <h3 className="text-lg font-semibold mb-2">Budget Used</h3>
+            <p className="text-3xl font-bold">{summary.percentageUsed.toFixed(1)}%</p>
           </div>
         </div>
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {categoryBreakdown.length > 0 && (
-          <div className="bg-white p-6 rounded-lg shadow">
-            <h3 className="text-lg font-semibold mb-4">Spending by Category</h3>
+        <div className="bg-white p-6 rounded-lg shadow">
+          <h3 className="text-xl font-semibold mb-4">Spending by Category</h3>
+          {categoryBreakdown.length > 0 ? (
             <ResponsiveContainer width="100%" height={300}>
               <PieChart>
                 <Pie
@@ -89,7 +96,7 @@ export function Analytics() {
                   cx="50%"
                   cy="50%"
                   labelLine={false}
-                  label={({ category, percentage }) => `${category}: ${percentage.toFixed(1)}%`}
+                  label={({ category, percentage }) => `${category} (${percentage.toFixed(1)}%)`}
                   outerRadius={80}
                   fill="#8884d8"
                   dataKey="amount"
@@ -102,22 +109,14 @@ export function Analytics() {
                 <Legend />
               </PieChart>
             </ResponsiveContainer>
-          </div>
-        )}
+          ) : (
+            <div className="text-center text-gray-500 py-12">No data available</div>
+          )}
+        </div>
 
-        {trends.length > 0 && (
-          <div className="bg-white p-6 rounded-lg shadow">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-semibold">Spending Trends</h3>
-              <Select
-                value={trendMonths.toString()}
-                onChange={(e) => setTrendMonths(parseInt(e.target.value))}
-              >
-                <option value="3">Last 3 Months</option>
-                <option value="6">Last 6 Months</option>
-                <option value="12">Last 12 Months</option>
-              </Select>
-            </div>
+        <div className="bg-white p-6 rounded-lg shadow">
+          <h3 className="text-xl font-semibold mb-4">Spending Trends</h3>
+          {trends.length > 0 ? (
             <ResponsiveContainer width="100%" height={300}>
               <LineChart data={trends}>
                 <CartesianGrid strokeDasharray="3 3" />
@@ -128,32 +127,11 @@ export function Analytics() {
                 <Line type="monotone" dataKey="amount" stroke="#8884d8" activeDot={{ r: 8 }} />
               </LineChart>
             </ResponsiveContainer>
-          </div>
-        )}
-      </div>
-
-      {categoryBreakdown.length > 0 && (
-        <div className="bg-white p-6 rounded-lg shadow">
-          <h3 className="text-lg font-semibold mb-4">Category Details</h3>
-          <div className="space-y-2">
-            {categoryBreakdown.map((item, index) => (
-              <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded">
-                <div className="flex items-center gap-3">
-                  <div
-                    className="w-4 h-4 rounded"
-                    style={{ backgroundColor: item.color || COLORS[index % COLORS.length] }}
-                  />
-                  <span className="font-medium">{item.category}</span>
-                </div>
-                <div className="text-right">
-                  <div className="font-semibold">${item.amount.toFixed(2)}</div>
-                  <div className="text-sm text-gray-500">{item.percentage.toFixed(1)}%</div>
-                </div>
-              </div>
-            ))}
-          </div>
+          ) : (
+            <div className="text-center text-gray-500 py-12">No data available</div>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 }
