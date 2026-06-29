@@ -1,125 +1,56 @@
-import { useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { Provider } from 'react-redux';
-import { Toaster } from 'react-hot-toast';
-import { store } from './store';
-import { useAppDispatch, useAppSelector } from './store/hooks';
-import { fetchCurrentUser } from './store/slices/authSlice';
-import Layout from './components/Layout';
-import Login from './components/Login';
-import Register from './components/Register';
-import Dashboard from './components/Dashboard';
-import ExpenseList from './components/ExpenseList';
-import ExpenseForm from './components/ExpenseForm';
-import Categories from './components/Categories';
-import Budgets from './components/Budgets';
-import Analytics from './components/Analytics';
+import React, { useState } from 'react';
+import NewExpense from './components/NewExpense/NewExpense';
+import Expenses from './components/Expenses/Expenses';
 
-function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, loading } = useAppSelector((state) => state.auth);
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-lg">Loading...</div>
-      </div>
-    );
-  }
-
-  if (!isAuthenticated) {
-    return <Navigate to="/login" replace />;
-  }
-
-  return <>{children}</>;
+interface Expense {
+  id: string;
+  title: string;
+  amount: number;
+  date: Date;
 }
 
-function PublicRoute({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated } = useAppSelector((state) => state.auth);
+const DUMMY_EXPENSES: Expense[] = [
+  {
+    id: 'e1',
+    title: 'Toilet Paper',
+    amount: 94.12,
+    date: new Date(2020, 7, 14),
+  },
+  { 
+    id: 'e2', 
+    title: 'New TV', 
+    amount: 799.49, 
+    date: new Date(2021, 2, 12) 
+  },
+  {
+    id: 'e3',
+    title: 'Car Insurance',
+    amount: 294.67,
+    date: new Date(2021, 2, 28),
+  },
+  {
+    id: 'e4',
+    title: 'New Desk (Wooden)',
+    amount: 450,
+    date: new Date(2021, 5, 12),
+  },
+];
 
-  if (isAuthenticated) {
-    return <Navigate to="/" replace />;
-  }
+const App: React.FC = () => {
+  const [expenses, setExpenses] = useState<Expense[]>(DUMMY_EXPENSES);
 
-  return <>{children}</>;
-}
-
-function AppRoutes() {
-  const dispatch = useAppDispatch();
-  const { token, isAuthenticated } = useAppSelector((state) => state.auth);
-
-  useEffect(() => {
-    if (token && !isAuthenticated) {
-      dispatch(fetchCurrentUser());
-    }
-  }, [dispatch, token, isAuthenticated]);
+  const addExpenseHandler = (expense: Expense) => {
+    setExpenses((prevExpenses) => {
+      return [expense, ...prevExpenses];
+    });
+  };
 
   return (
-    <Router>
-      <Routes>
-        <Route
-          path="/login"
-          element={
-            <PublicRoute>
-              <Login />
-            </PublicRoute>
-          }
-        />
-        <Route
-          path="/register"
-          element={
-            <PublicRoute>
-              <Register />
-            </PublicRoute>
-          }
-        />
-        <Route
-          path="/"
-          element={
-            <ProtectedRoute>
-              <Layout />
-            </ProtectedRoute>
-          }
-        >
-          <Route index element={<Dashboard />} />
-          <Route path="expenses" element={<ExpenseList />} />
-          <Route path="expenses/new" element={<ExpenseForm />} />
-          <Route path="categories" element={<Categories />} />
-          <Route path="budgets" element={<Budgets />} />
-          <Route path="analytics" element={<Analytics />} />
-        </Route>
-      </Routes>
-    </Router>
+    <div>
+      <NewExpense onAddExpense={addExpenseHandler} />
+      <Expenses items={expenses} />
+    </div>
   );
-}
+};
 
-export default function App() {
-  return (
-    <Provider store={store}>
-      <AppRoutes />
-      <Toaster
-        position="top-right"
-        toastOptions={{
-          duration: 3000,
-          style: {
-            background: '#363636',
-            color: '#fff',
-          },
-          success: {
-            duration: 3000,
-            iconTheme: {
-              primary: '#10B981',
-              secondary: '#fff',
-            },
-          },
-          error: {
-            duration: 4000,
-            iconTheme: {
-              primary: '#EF4444',
-              secondary: '#fff',
-            },
-          },
-        }}
-      />
-    </Provider>
-  );
-}
+export default App;
