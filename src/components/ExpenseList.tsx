@@ -1,56 +1,63 @@
-import { useEffect } from 'react';
-import { Pencil, Trash2, Receipt } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { useExpenseStore } from '../stores/expenseStore';
 import { useCategoryStore } from '../stores/categoryStore';
 import { Button } from './ui/button';
-import { format } from 'date-fns';
+import { Pencil, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import type { Expense } from '../types';
 
-export function ExpenseList() {
+interface ExpenseListProps {
+  onEdit?: (expense: Expense) => void;
+}
+
+export function ExpenseList({ onEdit }: ExpenseListProps) {
   const { expenses, isLoading, fetchExpenses, deleteExpense } = useExpenseStore();
-  const { categories } = useCategoryStore();
+  const { categories, fetchCategories } = useCategoryStore();
 
   useEffect(() => {
     fetchExpenses();
-  }, [fetchExpenses]);
-
-  const getCategoryName = (categoryId: number) => {
-    return categories.find((c) => c.id === categoryId)?.name || 'Unknown';
-  };
-
-  const getCategoryColor = (categoryId: number) => {
-    return categories.find((c) => c.id === categoryId)?.color || '#gray';
-  };
+    fetchCategories();
+  }, [fetchExpenses, fetchCategories]);
 
   const handleDelete = async (id: number) => {
-    if (confirm('Are you sure you want to delete this expense?')) {
+    if (window.confirm('Are you sure you want to delete this expense?')) {
       try {
         await deleteExpense(id);
-        toast.success('Expense deleted');
+        toast.success('Expense deleted successfully');
       } catch (error) {
         toast.error('Failed to delete expense');
       }
     }
   };
 
+  const getCategoryName = (categoryId: number) => {
+    const category = categories.find(c => c.id === categoryId);
+    return category?.name || 'Unknown';
+  };
+
+  const getCategoryColor = (categoryId: number) => {
+    const category = categories.find(c => c.id === categoryId);
+    return category?.color || '#gray';
+  };
+
   if (isLoading) {
     return (
-      <div className="bg-white p-6 rounded-lg shadow-sm">
-        <div className="text-center text-gray-500">Loading expenses...</div>
+      <div className="bg-white p-6 rounded-lg shadow-md">
+        <p className="text-center text-gray-500">Loading expenses...</p>
       </div>
     );
   }
 
   if (expenses.length === 0) {
     return (
-      <div className="bg-white p-6 rounded-lg shadow-sm">
-        <div className="text-center text-gray-500">No expenses found. Add your first expense to get started!</div>
+      <div className="bg-white p-6 rounded-lg shadow-md">
+        <p className="text-center text-gray-500">No expenses found. Add your first expense to get started!</p>
       </div>
     );
   }
 
   return (
-    <div className="bg-white rounded-lg shadow-sm overflow-hidden">
+    <div className="bg-white rounded-lg shadow-md overflow-hidden">
       <div className="overflow-x-auto">
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-50">
@@ -76,22 +83,17 @@ export function ExpenseList() {
             {expenses.map((expense) => (
               <tr key={expense.id} className="hover:bg-gray-50">
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                  {format(new Date(expense.date), 'MMM d, yyyy')}
+                  {new Date(expense.date).toLocaleDateString()}
                 </td>
                 <td className="px-6 py-4 text-sm text-gray-900">
-                  <div className="flex items-center gap-2">
-                    {expense.description}
-                    {expense.receiptUrl && (
-                      <Receipt className="h-4 w-4 text-gray-400" />
-                    )}
-                  </div>
+                  {expense.description}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm">
-                  <span
-                    className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium"
-                    style={{
+                  <span 
+                    className="px-2 py-1 rounded-full text-xs font-medium"
+                    style={{ 
                       backgroundColor: `${getCategoryColor(expense.categoryId)}20`,
-                      color: getCategoryColor(expense.categoryId),
+                      color: getCategoryColor(expense.categoryId)
                     }}
                   >
                     {getCategoryName(expense.categoryId)}
@@ -102,15 +104,21 @@ export function ExpenseList() {
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                   <div className="flex justify-end gap-2">
-                    <Button variant="ghost" size="sm">
-                      <Pencil className="h-4 w-4" />
-                    </Button>
+                    {onEdit && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => onEdit(expense)}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                    )}
                     <Button
-                      variant="ghost"
                       size="sm"
+                      variant="ghost"
                       onClick={() => handleDelete(expense.id)}
                     >
-                      <Trash2 className="h-4 w-4" />
+                      <Trash2 className="h-4 w-4 text-red-600" />
                     </Button>
                   </div>
                 </td>
