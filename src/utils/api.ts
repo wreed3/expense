@@ -1,42 +1,35 @@
-import axios from 'axios';
+import axios, { AxiosInstance, AxiosError, InternalAxiosRequestConfig } from 'axios';
+import { useAuthStore } from '../stores/authStore';
+import type { ApiError } from '../types';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
-
-export const api = axios.create({
-  baseURL: API_BASE_URL,
+const api: AxiosInstance = axios.create({
+  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:3001',
   headers: {
     'Content-Type': 'application/json',
   },
 });
 
-// Request interceptor to add auth token
 api.interceptors.request.use(
-  (config) => {
-    const token = localStorage.getItem('token');
-    if (token) {
+  (config: InternalAxiosRequestConfig): InternalAxiosRequestConfig => {
+    const token: string | null = useAuthStore.getState().token;
+    if (token && config.headers) {
       config.headers.Authorization = `Bearer ${token}`;
     }
     return config;
   },
-  (error) => {
+  (error: AxiosError): Promise<AxiosError> => {
     return Promise.reject(error);
   }
 );
 
-// Response interceptor to handle errors
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
+  (error: AxiosError<ApiError>): Promise<AxiosError> => {
     if (error.response?.status === 401) {
-      // Token expired or invalid
-      localStorage.removeItem('token');
+      useAuthStore.getState().logout();
       window.location.href = '/login';
     }
-    
-    // Extract error message
-    const message = error.response?.data?.message || error.message || 'An error occurred';
-    
-    return Promise.reject(new Error(message));
+    return Promise.reject(error);
   }
 );
 
