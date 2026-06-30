@@ -1,62 +1,31 @@
-import { Request, Response, NextFunction } from 'express';
+import { Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import type { AuthRequest } from '../types/express.js';
 
-export interface AuthRequest extends Request {
-  userId?: number;
-  user?: {
-    id: number;
-    email: string;
-    name?: string;
-  };
+interface JwtPayload {
+  userId: number;
+  iat: number;
+  exp: number;
 }
 
-export function authenticateToken(req: AuthRequest, res: Response, next: NextFunction) {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
+export const authenticateToken = (req: AuthRequest, res: Response, next: NextFunction): void => {
+  const authHeader: string | undefined = req.headers['authorization'];
+  const token: string | undefined = authHeader && authHeader.split(' ')[1];
 
   if (!token) {
-    return res.status(401).json({ error: 'Access token required' });
+    res.status(401).json({ error: 'Access token required' });
+    return;
   }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET!) as { userId: number; email: string; name?: string };
+    const decoded = jwt.verify(
+      token,
+      process.env.JWT_SECRET || 'your-secret-key'
+    ) as JwtPayload;
+    
     req.userId = decoded.userId;
-    req.user = {
-      id: decoded.userId,
-      email: decoded.email,
-      name: decoded.name,
-    };
     next();
   } catch (error) {
-    if (error instanceof jwt.TokenExpiredError) {
-      return res.status(401).json({ error: 'Token expired', code: 'TOKEN_EXPIRED' });
-    }
-    if (error instanceof jwt.JsonWebTokenError) {
-      return res.status(403).json({ error: 'Invalid token', code: 'INVALID_TOKEN' });
-    }
-    return res.status(403).json({ error: 'Token verification failed' });
+    res.status(403).json({ error: 'Invalid or expired token' });
   }
-}
-
-export function optionalAuth(req: AuthRequest, res: Response, next: NextFunction) {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-
-  if (!token) {
-    return next();
-  }
-
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET!) as { userId: number; email: string; name?: string };
-    req.userId = decoded.userId;
-    req.user = {
-      id: decoded.userId,
-      email: decoded.email,
-      name: decoded.name,
-    };
-  } catch (error) {
-    // Silently fail for optional auth
-  }
-  
-  next();
-}
+};

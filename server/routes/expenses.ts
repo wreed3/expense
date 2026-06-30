@@ -1,259 +1,244 @@
-import express, { Response } from 'express';
+import { Router, Response } from 'express';
 import { z } from 'zod';
 import multer from 'multer';
 import path from 'path';
-import { query, get, run } from '../utils/db.js';
+import { getDb } from '../utils/db.js';
 import { authenticateToken } from '../middleware/auth.js';
-import { validateRequest } from '../middleware/validateRequest.js';
-import logger from '../utils/logger.js';
-import type {
-  AuthRequest,
-  Expense,
-  ExpenseWithCategory,
-  CreateExpenseBody,
-  UpdateExpenseBody,
-  ExpenseQueryParams,
-} from '../types/index.js';
+import type { AuthRequest, ExpenseBody, ExpenseQueryParams } from '../types/express.js';
 
-const router = express.Router();
+const router: Router = Router();
 
-// File upload configuration
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, process.env.UPLOAD_DIR || './uploads');
   },
   filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    cb(null, uniqueSuffix + path.extname(file.originalname));
-  },
+    const uniqueSuffix: string = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+  }
 });
 
 const upload = multer({
   storage,
   limits: {
-    fileSize: parseInt(process.env.MAX_FILE_SIZE || '5242880'), // 5MB default
+    fileSize: parseInt(process.env.MAX_FILE_SIZE || '5242880') // 5MB default
   },
   fileFilter: (req, file, cb) => {
-    const allowedTypes = /jpeg|jpg|png|pdf/;
-    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    const mimetype = allowedTypes.test(file.mimetype);
-
-    if (extname && mimetype) {
+    const allowedTypes: string[] = ['image/jpeg', 'image/png', 'image/gif', 'application/pdf'];
+    if (allowedTypes.includes(file.mimetype)) {
       cb(null, true);
     } else {
-      cb(new Error('Only images (JPEG, PNG) and PDF files are allowed'));
+      cb(new Error('Invalid file type'));
     }
-  },
+  }
 });
 
-// Validation schemas
-const createExpenseSchema = z.object({
-  amount: z.number().positive('Amount must be positive'),
-  description: z.string().min(1, 'Description is required'),
-  category_id: z.number().int().positive('Valid category is required'),
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format'),
+const expenseSchema = z.object({
+  amount: z.number().positive(),
+  category_id: z.number().int().positive(),
+  description: z.string().min(1),
+  date: z.string(),
   is_recurring: z.boolean().optional(),
   recurring_frequency: z.enum(['daily', 'weekly', 'monthly', 'yearly']).optional(),
 });
 
-const updateExpenseSchema = createExpenseSchema.partial();
+interface Expense {
+  id: number;
+  user_id: number;
+  amount: number;
+  category_id: number;
+  description: string;
+  date: string;
+  receipt_path: string | null;
+  is_recurring: number;
+  recurring_frequency: string | null;
+  created_at: string;
+  category_name?: string;
+  category_color?: string;
+  category_icon?: string;
+}
 
-// Get all expenses
-router.get('/', authenticateToken, async (req: AuthRequest, res: Response): Promise<void> => {
+router.get('/', authenticateToken, (req: AuthRequest, res: Response): void => {
   try {
-    if (!req.user) {
-      res.status(401).json({ message: 'Not authenticated' });
-      return;
-    }
-
-    const { category_id, start_date, end_date, search } = req.query as ExpenseQueryParams;
-
-    let sql = `
+    const { startDate, endDate, category, search } = req.query as ExpenseQueryParams;
+    const db = getDb();
+    
+    let query: string = `
       SELECT e.*, c.name as category_name, c.color as category_color, c.icon as category_icon
       FROM expenses e
       JOIN categories c ON e.category_id = c.id
       WHERE e.user_id = ?
     `;
-    const params: any[] = [req.user.id];
-
-    if (category_id) {
-      sql += ' AND e.category_id = ?';
-      params.push(parseInt(category_id));
+    const params: (string | number | undefined)[] = [req.userId];
+    
+    if (startDate) {
+      query += ' AND e.date >= ?';
+      params.push(startDate);
     }
-
-    if (start_date) {
-      sql += ' AND e.date >= ?';
-      params.push(start_date);
+    if (endDate) {
+      query += ' AND e.date <= ?';
+      params.push(endDate);
     }
-
-    if (end_date) {
-      sql += ' AND e.date <= ?';
-      params.push(end_date);
+    if (category) {
+      query += ' AND c.name = ?';
+      params.push(category);
     }
-
     if (search) {
-      sql += ' AND e.description LIKE ?';
+      query += ' AND e.description LIKE ?';
       params.push(`%${search}%`);
     }
-
-    sql += ' ORDER BY e.date DESC, e.created_at DESC';
-
-    const expenses = await query<ExpenseWithCategory>(sql, params);
+    
+    query += ' ORDER BY e.date DESC, e.created_at DESC';
+    
+    const expenses = db.prepare(query).all(...params) as Expense[];
     res.json(expenses);
   } catch (error) {
-    logger.error('Get expenses error:', error);
-    res.status(500).json({ message: 'Error fetching expenses' });
+    res.status(500).json({ error: 'Failed to fetch expenses' });
   }
 });
 
-// Get single expense
-router.get('/:id', authenticateToken, async (req: AuthRequest, res: Response): Promise<void> => {
+router.post('/', authenticateToken, (req: AuthRequest, res: Response): void => {
   try {
-    if (!req.user) {
-      res.status(401).json({ message: 'Not authenticated' });
-      return;
-    }
-
-    const expense = await get<ExpenseWithCategory>(
-      `SELECT e.*, c.name as category_name, c.color as category_color, c.icon as category_icon
-       FROM expenses e
-       JOIN categories c ON e.category_id = c.id
-       WHERE e.id = ? AND e.user_id = ?`,
-      [req.params.id, req.user.id]
+    const expenseData = expenseSchema.parse(req.body) as ExpenseBody;
+    const db = getDb();
+    
+    const result = db.prepare(`
+      INSERT INTO expenses (user_id, amount, category_id, description, date, is_recurring, recurring_frequency)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      req.userId,
+      expenseData.amount,
+      expenseData.category_id,
+      expenseData.description,
+      expenseData.date,
+      expenseData.is_recurring ? 1 : 0,
+      expenseData.recurring_frequency || null
     );
-
-    if (!expense) {
-      res.status(404).json({ message: 'Expense not found' });
+    
+    const expense = db.prepare(`
+      SELECT e.*, c.name as category_name, c.color as category_color, c.icon as category_icon
+      FROM expenses e
+      JOIN categories c ON e.category_id = c.id
+      WHERE e.id = ?
+    `).get(result.lastInsertRowid) as Expense;
+    
+    res.status(201).json(expense);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: error.errors });
       return;
     }
+    res.status(500).json({ error: 'Failed to create expense' });
+  }
+});
 
+router.get('/:id', authenticateToken, (req: AuthRequest, res: Response): void => {
+  try {
+    const db = getDb();
+    const expense = db.prepare(`
+      SELECT e.*, c.name as category_name, c.color as category_color, c.icon as category_icon
+      FROM expenses e
+      JOIN categories c ON e.category_id = c.id
+      WHERE e.id = ? AND e.user_id = ?
+    `).get(req.params.id, req.userId) as Expense | undefined;
+    
+    if (!expense) {
+      res.status(404).json({ error: 'Expense not found' });
+      return;
+    }
+    
     res.json(expense);
   } catch (error) {
-    logger.error('Get expense error:', error);
-    res.status(500).json({ message: 'Error fetching expense' });
+    res.status(500).json({ error: 'Failed to fetch expense' });
   }
 });
 
-// Create expense
-router.post(
-  '/',
-  authenticateToken,
-  upload.single('receipt'),
-  validateRequest(createExpenseSchema),
-  async (req: AuthRequest, res: Response): Promise<void> => {
-    try {
-      if (!req.user) {
-        res.status(401).json({ message: 'Not authenticated' });
-        return;
-      }
-
-      const { amount, description, category_id, date, is_recurring, recurring_frequency } =
-        req.body as CreateExpenseBody;
-
-      const receiptPath = req.file ? `/uploads/${req.file.filename}` : null;
-
-      const result = await query<Expense>(
-        `INSERT INTO expenses (user_id, amount, description, category_id, date, receipt_path, is_recurring, recurring_frequency)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
-        [
-          req.user.id,
-          amount,
-          description,
-          category_id,
-          date,
-          receiptPath,
-          is_recurring || false,
-          recurring_frequency || null,
-        ]
-      );
-
-      logger.info('Expense created:', { expenseId: result[0].id, userId: req.user.id });
-      res.status(201).json(result[0]);
-    } catch (error) {
-      logger.error('Create expense error:', error);
-      res.status(500).json({ message: 'Error creating expense' });
-    }
-  }
-);
-
-// Update expense
-router.put(
-  '/:id',
-  authenticateToken,
-  upload.single('receipt'),
-  validateRequest(updateExpenseSchema),
-  async (req: AuthRequest, res: Response): Promise<void> => {
-    try {
-      if (!req.user) {
-        res.status(401).json({ message: 'Not authenticated' });
-        return;
-      }
-
-      const expense = await get<Expense>(
-        'SELECT * FROM expenses WHERE id = ? AND user_id = ?',
-        [req.params.id, req.user.id]
-      );
-
-      if (!expense) {
-        res.status(404).json({ message: 'Expense not found' });
-        return;
-      }
-
-      const updates = req.body as UpdateExpenseBody;
-      const receiptPath = req.file ? `/uploads/${req.file.filename}` : expense.receipt_path;
-
-      const result = await query<Expense>(
-        `UPDATE expenses
-         SET amount = ?, description = ?, category_id = ?, date = ?,
-             receipt_path = ?, is_recurring = ?, recurring_frequency = ?, updated_at = CURRENT_TIMESTAMP
-         WHERE id = ? AND user_id = ? RETURNING *`,
-        [
-          updates.amount ?? expense.amount,
-          updates.description ?? expense.description,
-          updates.category_id ?? expense.category_id,
-          updates.date ?? expense.date,
-          receiptPath,
-          updates.is_recurring ?? expense.is_recurring,
-          updates.recurring_frequency ?? expense.recurring_frequency,
-          req.params.id,
-          req.user.id,
-        ]
-      );
-
-      logger.info('Expense updated:', { expenseId: req.params.id, userId: req.user.id });
-      res.json(result[0]);
-    } catch (error) {
-      logger.error('Update expense error:', error);
-      res.status(500).json({ message: 'Error updating expense' });
-    }
-  }
-);
-
-// Delete expense
-router.delete('/:id', authenticateToken, async (req: AuthRequest, res: Response): Promise<void> => {
+router.put('/:id', authenticateToken, (req: AuthRequest, res: Response): void => {
   try {
-    if (!req.user) {
-      res.status(401).json({ message: 'Not authenticated' });
+    const expenseData = expenseSchema.parse(req.body) as ExpenseBody;
+    const db = getDb();
+    
+    const existing = db.prepare('SELECT id FROM expenses WHERE id = ? AND user_id = ?')
+      .get(req.params.id, req.userId) as { id: number } | undefined;
+    
+    if (!existing) {
+      res.status(404).json({ error: 'Expense not found' });
       return;
     }
-
-    const expense = await get<Expense>(
-      'SELECT * FROM expenses WHERE id = ? AND user_id = ?',
-      [req.params.id, req.user.id]
+    
+    db.prepare(`
+      UPDATE expenses
+      SET amount = ?, category_id = ?, description = ?, date = ?, is_recurring = ?, recurring_frequency = ?
+      WHERE id = ?
+    `).run(
+      expenseData.amount,
+      expenseData.category_id,
+      expenseData.description,
+      expenseData.date,
+      expenseData.is_recurring ? 1 : 0,
+      expenseData.recurring_frequency || null,
+      req.params.id
     );
-
-    if (!expense) {
-      res.status(404).json({ message: 'Expense not found' });
+    
+    const expense = db.prepare(`
+      SELECT e.*, c.name as category_name, c.color as category_color, c.icon as category_icon
+      FROM expenses e
+      JOIN categories c ON e.category_id = c.id
+      WHERE e.id = ?
+    `).get(req.params.id) as Expense;
+    
+    res.json(expense);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: error.errors });
       return;
     }
+    res.status(500).json({ error: 'Failed to update expense' });
+  }
+});
 
-    await run('DELETE FROM expenses WHERE id = ? AND user_id = ?', [req.params.id, req.user.id]);
-
-    logger.info('Expense deleted:', { expenseId: req.params.id, userId: req.user.id });
-    res.json({ message: 'Expense deleted successfully' });
+router.delete('/:id', authenticateToken, (req: AuthRequest, res: Response): void => {
+  try {
+    const db = getDb();
+    
+    const existing = db.prepare('SELECT id FROM expenses WHERE id = ? AND user_id = ?')
+      .get(req.params.id, req.userId) as { id: number } | undefined;
+    
+    if (!existing) {
+      res.status(404).json({ error: 'Expense not found' });
+      return;
+    }
+    
+    db.prepare('DELETE FROM expenses WHERE id = ?').run(req.params.id);
+    res.status(204).send();
   } catch (error) {
-    logger.error('Delete expense error:', error);
-    res.status(500).json({ message: 'Error deleting expense' });
+    res.status(500).json({ error: 'Failed to delete expense' });
+  }
+});
+
+router.post('/:id/receipt', authenticateToken, upload.single('receipt'), (req: AuthRequest, res: Response): void => {
+  try {
+    if (!req.file) {
+      res.status(400).json({ error: 'No file uploaded' });
+      return;
+    }
+    
+    const db = getDb();
+    
+    const existing = db.prepare('SELECT id FROM expenses WHERE id = ? AND user_id = ?')
+      .get(req.params.id, req.userId) as { id: number } | undefined;
+    
+    if (!existing) {
+      res.status(404).json({ error: 'Expense not found' });
+      return;
+    }
+    
+    db.prepare('UPDATE expenses SET receipt_path = ? WHERE id = ?')
+      .run(req.file.path, req.params.id);
+    
+    res.json({ receipt_path: req.file.path });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to upload receipt' });
   }
 });
 
