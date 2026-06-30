@@ -1,29 +1,32 @@
 import { Request, Response, NextFunction } from 'express';
+import { ZodError } from 'zod';
 import { logger } from '../utils/logger.js';
 
-interface ErrorWithStatus extends Error {
-  status?: number;
-  statusCode?: number;
-}
-
 export const errorHandler = (
-  err: ErrorWithStatus,
+  err: Error,
   req: Request,
   res: Response,
   next: NextFunction
-): void => {
+) => {
   logger.error('Error:', {
     message: err.message,
     stack: err.stack,
     path: req.path,
-    method: req.method,
+    method: req.method
   });
 
-  const status: number = err.status || err.statusCode || 500;
-  const message: string = err.message || 'Internal Server Error';
+  // Zod validation errors
+  if (err instanceof ZodError) {
+    return res.status(400).json({
+      error: 'Validation error',
+      details: err.errors
+    });
+  }
 
-  res.status(status).json({
-    error: message,
-    ...(process.env.NODE_ENV === 'development' && { stack: err.stack }),
+  // Default error
+  res.status(500).json({
+    error: process.env.NODE_ENV === 'production' 
+      ? 'Internal server error' 
+      : err.message
   });
 };

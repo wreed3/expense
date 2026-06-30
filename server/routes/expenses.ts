@@ -1,19 +1,25 @@
-import { Router, Response } from 'express';
-import { z } from 'zod';
+import express from 'express';
 import multer from 'multer';
 import path from 'path';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+import { z } from 'zod';
 import { getDb } from '../utils/db.js';
-import { authenticateToken } from '../middleware/auth.js';
-import type { AuthRequest, ExpenseBody, ExpenseQueryParams } from '../types/express.js';
+import { authenticate } from '../middleware/auth.js';
+import { logger } from '../utils/logger.js';
 
-const router: Router = Router();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
+const router = express.Router();
+
+// Configure multer for file uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, process.env.UPLOAD_DIR || './uploads');
+    cb(null, process.env.UPLOAD_DIR || path.join(__dirname, '../../uploads'));
   },
   filename: (req, file, cb) => {
-    const uniqueSuffix: string = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
     cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
   }
 });
@@ -24,221 +30,232 @@ const upload = multer({
     fileSize: parseInt(process.env.MAX_FILE_SIZE || '5242880') // 5MB default
   },
   fileFilter: (req, file, cb) => {
-    const allowedTypes: string[] = ['image/jpeg', 'image/png', 'image/gif', 'application/pdf'];
-    if (allowedTypes.includes(file.mimetype)) {
-      cb(null, true);
+    const allowedTypes = /jpeg|jpg|png|pdf/;
+    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+    const mimetype = allowedTypes.test(file.mimetype);
+
+    if (mimetype && extname) {
+      return cb(null, true);
     } else {
-      cb(new Error('Invalid file type'));
+      cb(new Error('Only images (JPEG, PNG) and PDFs are allowed'));
     }
   }
 });
 
 const expenseSchema = z.object({
   amount: z.number().positive(),
-  category_id: z.number().int().positive(),
   description: z.string().min(1),
+  category_id: z.number().int().positive(),
   date: z.string(),
-  is_recurring: z.boolean().optional(),
-  recurring_frequency: z.enum(['daily', 'weekly', 'monthly', 'yearly']).optional(),
+  notes: z.string().optional()
 });
 
-interface Expense {
-  id: number;
-  user_id: number;
-  amount: number;
-  category_id: number;
-  description: string;
-  date: string;
-  receipt_path: string | null;
-  is_recurring: number;
-  recurring_frequency: string | null;
-  created_at: string;
-  category_name?: string;
-  category_color?: string;
-  category_icon?: string;
-}
-
-router.get('/', authenticateToken, (req: AuthRequest, res: Response): void => {
+// Get all expenses
+router.get('/', authenticate, (req, res, next) => {
   try {
-    const { startDate, endDate, category, search } = req.query as ExpenseQueryParams;
     const db = getDb();
-    
-    let query: string = `
-      SELECT e.*, c.name as category_name, c.color as category_color, c.icon as category_icon
+    const { start_date, end_date, category_id, search } = req.query;
+
+    let query = `
+      SELECT e.*, c.name as category_name, c.color as category_color
       FROM expenses e
       JOIN categories c ON e.category_id = c.id
       WHERE e.user_id = ?
     `;
-    const params: (string | number | undefined)[] = [req.userId];
-    
-    if (startDate) {
+    const params: any[] = [req.userId];
+
+    if (start_date) {
       query += ' AND e.date >= ?';
-      params.push(startDate);
+      params.push(start_date);
     }
-    if (endDate) {
+
+    if (end_date) {
       query += ' AND e.date <= ?';
-      params.push(endDate);
+      params.push(end_date);
     }
-    if (category) {
-      query += ' AND c.name = ?';
-      params.push(category);
+
+    if (category_id) {
+      query += ' AND e.category_id = ?';
+      params.push(category_id);
     }
+
     if (search) {
-      query += ' AND e.description LIKE ?';
-      params.push(`%${search}%`);
+      query += ' AND (e.description LIKE ? OR e.notes LIKE ?)';
+      const searchPattern = `%${search}%`;
+      params.push(searchPattern, searchPattern);
     }
-    
+
     query += ' ORDER BY e.date DESC, e.created_at DESC';
-    
-    const expenses = db.prepare(query).all(...params) as Expense[];
+
+    const expenses = db.prepare(query).all(...params);
     res.json(expenses);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch expenses' });
+    next(error);
   }
 });
 
-router.post('/', authenticateToken, (req: AuthRequest, res: Response): void => {
-  try {
-    const expenseData = expenseSchema.parse(req.body) as ExpenseBody;
-    const db = getDb();
-    
-    const result = db.prepare(`
-      INSERT INTO expenses (user_id, amount, category_id, description, date, is_recurring, recurring_frequency)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      req.userId,
-      expenseData.amount,
-      expenseData.category_id,
-      expenseData.description,
-      expenseData.date,
-      expenseData.is_recurring ? 1 : 0,
-      expenseData.recurring_frequency || null
-    );
-    
-    const expense = db.prepare(`
-      SELECT e.*, c.name as category_name, c.color as category_color, c.icon as category_icon
-      FROM expenses e
-      JOIN categories c ON e.category_id = c.id
-      WHERE e.id = ?
-    `).get(result.lastInsertRowid) as Expense;
-    
-    res.status(201).json(expense);
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      res.status(400).json({ error: error.errors });
-      return;
-    }
-    res.status(500).json({ error: 'Failed to create expense' });
-  }
-});
-
-router.get('/:id', authenticateToken, (req: AuthRequest, res: Response): void => {
+// Get single expense
+router.get('/:id', authenticate, (req, res, next) => {
   try {
     const db = getDb();
     const expense = db.prepare(`
-      SELECT e.*, c.name as category_name, c.color as category_color, c.icon as category_icon
+      SELECT e.*, c.name as category_name, c.color as category_color
       FROM expenses e
       JOIN categories c ON e.category_id = c.id
       WHERE e.id = ? AND e.user_id = ?
-    `).get(req.params.id, req.userId) as Expense | undefined;
-    
+    `).get(req.params.id, req.userId) as any;
+
     if (!expense) {
-      res.status(404).json({ error: 'Expense not found' });
-      return;
+      return res.status(404).json({ error: 'Expense not found' });
     }
-    
+
     res.json(expense);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch expense' });
+    next(error);
   }
 });
 
-router.put('/:id', authenticateToken, (req: AuthRequest, res: Response): void => {
+// Create expense
+router.post('/', authenticate, (req, res, next) => {
   try {
-    const expenseData = expenseSchema.parse(req.body) as ExpenseBody;
+    const data = expenseSchema.parse(req.body);
     const db = getDb();
-    
-    const existing = db.prepare('SELECT id FROM expenses WHERE id = ? AND user_id = ?')
-      .get(req.params.id, req.userId) as { id: number } | undefined;
-    
-    if (!existing) {
-      res.status(404).json({ error: 'Expense not found' });
-      return;
+
+    // Verify category belongs to user
+    const category = db.prepare(
+      'SELECT id FROM categories WHERE id = ? AND user_id = ?'
+    ).get(data.category_id, req.userId);
+
+    if (!category) {
+      return res.status(400).json({ error: 'Invalid category' });
     }
-    
-    db.prepare(`
-      UPDATE expenses
-      SET amount = ?, category_id = ?, description = ?, date = ?, is_recurring = ?, recurring_frequency = ?
-      WHERE id = ?
+
+    const result = db.prepare(`
+      INSERT INTO expenses (user_id, amount, description, category_id, date, notes)
+      VALUES (?, ?, ?, ?, ?, ?)
     `).run(
-      expenseData.amount,
-      expenseData.category_id,
-      expenseData.description,
-      expenseData.date,
-      expenseData.is_recurring ? 1 : 0,
-      expenseData.recurring_frequency || null,
-      req.params.id
+      req.userId,
+      data.amount,
+      data.description,
+      data.category_id,
+      data.date,
+      data.notes || null
     );
-    
+
     const expense = db.prepare(`
-      SELECT e.*, c.name as category_name, c.color as category_color, c.icon as category_icon
+      SELECT e.*, c.name as category_name, c.color as category_color
       FROM expenses e
       JOIN categories c ON e.category_id = c.id
       WHERE e.id = ?
-    `).get(req.params.id) as Expense;
-    
+    `).get(result.lastInsertRowid) as any;
+
+    logger.info(`Expense created: ${expense.id} by user ${req.userId}`);
+    res.status(201).json(expense);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Update expense
+router.put('/:id', authenticate, (req, res, next) => {
+  try {
+    const data = expenseSchema.parse(req.body);
+    const db = getDb();
+
+    // Verify expense belongs to user
+    const existing = db.prepare(
+      'SELECT id FROM expenses WHERE id = ? AND user_id = ?'
+    ).get(req.params.id, req.userId);
+
+    if (!existing) {
+      return res.status(404).json({ error: 'Expense not found' });
+    }
+
+    // Verify category belongs to user
+    const category = db.prepare(
+      'SELECT id FROM categories WHERE id = ? AND user_id = ?'
+    ).get(data.category_id, req.userId);
+
+    if (!category) {
+      return res.status(400).json({ error: 'Invalid category' });
+    }
+
+    db.prepare(`
+      UPDATE expenses
+      SET amount = ?, description = ?, category_id = ?, date = ?, notes = ?
+      WHERE id = ? AND user_id = ?
+    `).run(
+      data.amount,
+      data.description,
+      data.category_id,
+      data.date,
+      data.notes || null,
+      req.params.id,
+      req.userId
+    );
+
+    const expense = db.prepare(`
+      SELECT e.*, c.name as category_name, c.color as category_color
+      FROM expenses e
+      JOIN categories c ON e.category_id = c.id
+      WHERE e.id = ?
+    `).get(req.params.id) as any;
+
+    logger.info(`Expense updated: ${expense.id} by user ${req.userId}`);
     res.json(expense);
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      res.status(400).json({ error: error.errors });
-      return;
-    }
-    res.status(500).json({ error: 'Failed to update expense' });
+    next(error);
   }
 });
 
-router.delete('/:id', authenticateToken, (req: AuthRequest, res: Response): void => {
+// Delete expense
+router.delete('/:id', authenticate, (req, res, next) => {
   try {
     const db = getDb();
-    
-    const existing = db.prepare('SELECT id FROM expenses WHERE id = ? AND user_id = ?')
-      .get(req.params.id, req.userId) as { id: number } | undefined;
-    
-    if (!existing) {
-      res.status(404).json({ error: 'Expense not found' });
-      return;
+
+    const result = db.prepare(
+      'DELETE FROM expenses WHERE id = ? AND user_id = ?'
+    ).run(req.params.id, req.userId);
+
+    if (result.changes === 0) {
+      return res.status(404).json({ error: 'Expense not found' });
     }
-    
-    db.prepare('DELETE FROM expenses WHERE id = ?').run(req.params.id);
+
+    logger.info(`Expense deleted: ${req.params.id} by user ${req.userId}`);
     res.status(204).send();
   } catch (error) {
-    res.status(500).json({ error: 'Failed to delete expense' });
+    next(error);
   }
 });
 
-router.post('/:id/receipt', authenticateToken, upload.single('receipt'), (req: AuthRequest, res: Response): void => {
+// Upload receipt
+router.post('/:id/receipt', authenticate, upload.single('receipt'), (req, res, next) => {
   try {
     if (!req.file) {
-      res.status(400).json({ error: 'No file uploaded' });
-      return;
+      return res.status(400).json({ error: 'No file uploaded' });
     }
-    
+
     const db = getDb();
-    
-    const existing = db.prepare('SELECT id FROM expenses WHERE id = ? AND user_id = ?')
-      .get(req.params.id, req.userId) as { id: number } | undefined;
-    
-    if (!existing) {
-      res.status(404).json({ error: 'Expense not found' });
-      return;
+
+    // Verify expense belongs to user
+    const expense = db.prepare(
+      'SELECT id FROM expenses WHERE id = ? AND user_id = ?'
+    ).get(req.params.id, req.userId);
+
+    if (!expense) {
+      return res.status(404).json({ error: 'Expense not found' });
     }
-    
-    db.prepare('UPDATE expenses SET receipt_path = ? WHERE id = ?')
-      .run(req.file.path, req.params.id);
-    
-    res.json({ receipt_path: req.file.path });
+
+    const receiptPath = `/uploads/${req.file.filename}`;
+
+    db.prepare(
+      'UPDATE expenses SET receipt_path = ? WHERE id = ?'
+    ).run(receiptPath, req.params.id);
+
+    logger.info(`Receipt uploaded for expense: ${req.params.id}`);
+    res.json({ receipt_path: receiptPath });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to upload receipt' });
+    next(error);
   }
 });
 

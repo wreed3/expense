@@ -1,6 +1,6 @@
 import winston from 'winston';
 
-const logLevel: string = process.env.LOG_LEVEL || 'info';
+const logLevel = process.env.LOG_LEVEL || 'info';
 
 export const logger = winston.createLogger({
   level: logLevel,
@@ -14,23 +14,18 @@ export const logger = winston.createLogger({
       format: winston.format.combine(
         winston.format.colorize(),
         winston.format.simple()
-      ),
-    }),
-    new winston.transports.File({
-      filename: 'logs/error.log',
-      level: 'error',
-    }),
-    new winston.transports.File({
-      filename: 'logs/combined.log',
-    }),
-  ],
+      )
+    })
+  ]
 });
 
-if (process.env.NODE_ENV !== 'production') {
-  logger.add(new winston.transports.Console({
-    format: winston.format.combine(
-      winston.format.colorize(),
-      winston.format.simple()
-    ),
+// Add file transport in production
+if (process.env.NODE_ENV === 'production') {
+  logger.add(new winston.transports.File({ 
+    filename: 'error.log', 
+    level: 'error' 
+  }));
+  logger.add(new winston.transports.File({ 
+    filename: 'combined.log' 
   }));
 }

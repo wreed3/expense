@@ -2,75 +2,76 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
-import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+import fs from 'fs';
 
-// Load environment variables
-dotenv.config();
+import { initDatabase } from './utils/db.js';
+import { logger } from './utils/logger.js';
+import { validateEnv } from './utils/validateEnv.js';
+import { errorHandler } from './middleware/errorHandler.js';
 
-// Import utilities
-import { validateEnv } from './utils/validateEnv';
-import { initializeDatabase, isDatabaseInitialized } from './utils/db';
-import { runMigrations } from './migrations/init';
-import { errorHandler, notFoundHandler } from './middleware/errorHandler';
-
-// Import routes
-import authRoutes from './routes/auth';
-import expenseRoutes from './routes/expenses';
-import categoryRoutes from './routes/categories';
-import budgetRoutes from './routes/budgets';
-import analyticsRoutes from './routes/analytics';
-import exportRoutes from './routes/export';
+import authRoutes from './routes/auth.js';
+import expenseRoutes from './routes/expenses.js';
+import categoryRoutes from './routes/categories.js';
+import budgetRoutes from './routes/budgets.js';
+import analyticsRoutes from './routes/analytics.js';
+import exportRoutes from './routes/export.js';
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const __dirname = dirname(__filename);
 
 // Validate environment variables
-const env = validateEnv();
+validateEnv();
 
 const app = express();
-const PORT = parseInt(env.PORT);
+const PORT = process.env.PORT || 3001;
+
+// Initialize database and run migrations
+try {
+  await initDatabase();
+  logger.info('Database initialized and migrations completed');
+} catch (error) {
+  logger.error('Failed to initialize database:', error);
+  process.exit(1);
+}
+
+// Ensure uploads directory exists
+const uploadsDir = process.env.UPLOAD_DIR || path.join(__dirname, '../uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+  logger.info(`Created uploads directory: ${uploadsDir}`);
+}
 
 // Security middleware
-app.use(helmet({
-  crossOriginResourcePolicy: { policy: "cross-origin" },
-  contentSecurityPolicy: false,
-}));
-
-// CORS configuration
+app.use(helmet());
 app.use(cors({
-  origin: env.CLIENT_URL,
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  origin: process.env.CLIENT_URL || 'http://localhost:3000',
+  credentials: true
 }));
 
 // Rate limiting
 const limiter = rateLimit({
-  windowMs: parseInt(env.RATE_LIMIT_WINDOW_MS),
-  max: parseInt(env.RATE_LIMIT_MAX_REQUESTS),
-  message: { error: 'Too many requests, please try again later', code: 'RATE_LIMIT_EXCEEDED' },
-  standardHeaders: true,
-  legacyHeaders: false,
+  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000'), // 15 minutes
+  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100'),
+  message: 'Too many requests from this IP, please try again later.'
 });
-
 app.use('/api/', limiter);
 
 // Body parsing middleware
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// Static file serving for uploads
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+// Serve uploaded files
+app.use('/uploads', express.static(uploadsDir));
 
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'ok', 
     timestamp: new Date().toISOString(),
-    environment: env.NODE_ENV,
-    database: env.DB_TYPE,
+    database: 'connected'
   });
 });
 
@@ -82,49 +83,11 @@ app.use('/api/budgets', budgetRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/export', exportRoutes);
 
-// Error handling
-app.use(notFoundHandler);
+// Error handling middleware (must be last)
 app.use(errorHandler);
 
-// Initialize database and start server
-async function startServer() {
-  try {
-    console.log('Starting Expense Tracker server...');
-    console.log(`Environment: ${env.NODE_ENV}`);
-    console.log(`Database: ${env.DB_TYPE}`);
-    
-    // Initialize database
-    initializeDatabase();
-    
-    // Run migrations if needed
-    if (!isDatabaseInitialized() || env.NODE_ENV === 'development') {
-      console.log('Running database migrations...');
-      await runMigrations();
-    }
-    
-    // Start server
-    app.listen(PORT, () => {
-      console.log(`✓ Server running on port ${PORT}`);
-      console.log(`✓ API available at http://localhost:${PORT}/api`);
-      console.log(`✓ Health check: http://localhost:${PORT}/health`);
-      console.log(`✓ Client URL: ${env.CLIENT_URL}`);
-    });
-  } catch (error) {
-    console.error('Failed to start server:', error);
-    process.exit(1);
-  }
-}
-
-// Handle graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received, shutting down gracefully...');
-  process.exit(0);
+app.listen(PORT, () => {
+  logger.info(`Server running on port ${PORT}`);
+  logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  logger.info(`Database type: ${process.env.DB_TYPE || 'sqlite'}`);
 });
-
-process.on('SIGINT', () => {
-  console.log('SIGINT received, shutting down gracefully...');
-  process.exit(0);
-});
-
-// Start the server
-startServer();

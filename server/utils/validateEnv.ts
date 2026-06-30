@@ -1,33 +1,18 @@
 import { logger } from './logger.js';
 
-interface RequiredEnvVars {
-  JWT_SECRET: string;
-  PORT?: string;
-  NODE_ENV?: string;
-  DB_PATH?: string;
-  UPLOAD_DIR?: string;
-  MAX_FILE_SIZE?: string;
-  CLIENT_URL?: string;
-}
-
-export const validateEnv = (): void => {
-  const required: (keyof RequiredEnvVars)[] = ['JWT_SECRET'];
-  const missing: string[] = [];
-
-  for (const key of required) {
-    if (!process.env[key]) {
-      missing.push(key);
-    }
-  }
+export const validateEnv = () => {
+  const required = ['JWT_SECRET'];
+  const missing = required.filter(key => !process.env[key]);
 
   if (missing.length > 0) {
     logger.error(`Missing required environment variables: ${missing.join(', ')}`);
-    throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
+    process.exit(1);
   }
 
-  if (process.env.JWT_SECRET && process.env.JWT_SECRET.length < 32) {
-    logger.warn('JWT_SECRET should be at least 32 characters long for security');
+  // Warn about default values
+  if (process.env.JWT_SECRET === 'your-super-secret-jwt-key-change-this-in-production-minimum-32-chars') {
+    logger.warn('WARNING: Using default JWT_SECRET. Change this in production!');
   }
 
-  logger.info('Environment variables validated successfully');
+  logger.info('Environment variables validated');
 };
