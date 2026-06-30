@@ -1,148 +1,160 @@
-import express, { Response } from 'express';
-import { query } from '../utils/db.js';
+import { Router, Response } from 'express';
+import { getDb } from '../utils/db.js';
 import { authenticateToken } from '../middleware/auth.js';
-import logger from '../utils/logger.js';
-import type {
-  AuthRequest,
-  CategorySpending,
-  MonthlySpending,
-  SpendingSummary,
-  AnalyticsQueryParams,
-} from '../types/index.js';
+import type { AuthRequest, AnalyticsQueryParams } from '../types/express.js';
 
-const router = express.Router();
+const router: Router = Router();
 
-// Get spending summary
-router.get('/summary', authenticateToken, async (req: AuthRequest, res: Response): Promise<void> => {
+interface CategorySpending {
+  category_id: number;
+  category_name: string;
+  category_color: string;
+  total: number;
+  count: number;
+}
+
+interface TrendData {
+  period: string;
+  total: number;
+}
+
+interface SummaryData {
+  total: number;
+  count: number;
+  average: number;
+  categories: CategorySpending[];
+}
+
+router.get('/summary', authenticateToken, (req: AuthRequest, res: Response): void => {
   try {
-    if (!req.user) {
-      res.status(401).json({ message: 'Not authenticated' });
-      return;
+    const { startDate, endDate } = req.query as AnalyticsQueryParams;
+    const db = getDb();
+    
+    let query: string = `
+      SELECT 
+        SUM(e.amount) as total,
+        COUNT(*) as count,
+        AVG(e.amount) as average
+      FROM expenses e
+      WHERE e.user_id = ?
+    `;
+    const params: (string | number | undefined)[] = [req.userId];
+    
+    if (startDate) {
+      query += ' AND e.date >= ?';
+      params.push(startDate);
     }
-
-    const { start_date, end_date } = req.query as AnalyticsQueryParams;
-
-    let dateFilter = '';
-    const params: any[] = [req.user.id];
-
-    if (start_date && end_date) {
-      dateFilter = 'AND e.date BETWEEN ? AND ?';
-      params.push(start_date, end_date);
+    if (endDate) {
+      query += ' AND e.date <= ?';
+      params.push(endDate);
     }
-
-    // Total expenses and amount
-    const totals = await query<{ count: number; total: number }>(
-      `SELECT COUNT(*) as count, COALESCE(SUM(amount), 0) as total
-       FROM expenses e
-       WHERE e.user_id = ? ${dateFilter}`,
-      params
-    );
-
-    // Category breakdown
-    const categoryBreakdown = await query<CategorySpending>(
-      `SELECT c.id as category_id, c.name as category_name, c.color as category_color,
-              COALESCE(SUM(e.amount), 0) as total_spent
-       FROM categories c
-       LEFT JOIN expenses e ON e.category_id = c.id AND e.user_id = ? ${dateFilter}
-       WHERE c.user_id = ?
-       GROUP BY c.id
-       ORDER BY total_spent DESC`,
-      [...params, req.user.id]
-    );
-
-    // Monthly trend
-    const monthlyTrend = await query<MonthlySpending>(
-      `SELECT strftime('%Y-%m', date) as month, SUM(amount) as total
-       FROM expenses
-       WHERE user_id = ? ${dateFilter}
-       GROUP BY month
-       ORDER BY month DESC
-       LIMIT 12`,
-      params
-    );
-
-    const summary: SpendingSummary = {
-      total_expenses: totals[0]?.count || 0,
-      total_spent: totals[0]?.total || 0,
-      category_breakdown: categoryBreakdown,
-      monthly_trend: monthlyTrend,
-    };
-
-    res.json(summary);
+    
+    const summary = db.prepare(query).get(...params) as { total: number | null; count: number; average: number | null };
+    
+    let categoryQuery: string = `
+      SELECT 
+        c.id as category_id,
+        c.name as category_name,
+        c.color as category_color,
+        SUM(e.amount) as total,
+        COUNT(*) as count
+      FROM expenses e
+      JOIN categories c ON e.category_id = c.id
+      WHERE e.user_id = ?
+    `;
+    const categoryParams: (string | number | undefined)[] = [req.userId];
+    
+    if (startDate) {
+      categoryQuery += ' AND e.date >= ?';
+      categoryParams.push(startDate);
+    }
+    if (endDate) {
+      categoryQuery += ' AND e.date <= ?';
+      categoryParams.push(endDate);
+    }
+    
+    categoryQuery += ' GROUP BY c.id ORDER BY total DESC';
+    
+    const categories = db.prepare(categoryQuery).all(...categoryParams) as CategorySpending[];
+    
+    res.json({
+      total: summary.total || 0,
+      count: summary.count,
+      average: summary.average || 0,
+      categories,
+    });
   } catch (error) {
-    logger.error('Get summary error:', error);
-    res.status(500).json({ message: 'Error fetching summary' });
+    res.status(500).json({ error: 'Failed to fetch analytics summary' });
   }
 });
 
-// Get spending trends
-router.get('/trends', authenticateToken, async (req: AuthRequest, res: Response): Promise<void> => {
+router.get('/trends', authenticateToken, (req: AuthRequest, res: Response): void => {
   try {
-    if (!req.user) {
-      res.status(401).json({ message: 'Not authenticated' });
-      return;
+    const { startDate, endDate } = req.query as AnalyticsQueryParams;
+    const db = getDb();
+    
+    let query: string = `
+      SELECT 
+        strftime('%Y-%m', date) as period,
+        SUM(amount) as total
+      FROM expenses
+      WHERE user_id = ?
+    `;
+    const params: (string | number | undefined)[] = [req.userId];
+    
+    if (startDate) {
+      query += ' AND date >= ?';
+      params.push(startDate);
     }
-
-    const { start_date, end_date } = req.query as AnalyticsQueryParams;
-
-    let dateFilter = '';
-    const params: any[] = [req.user.id];
-
-    if (start_date && end_date) {
-      dateFilter = 'AND date BETWEEN ? AND ?';
-      params.push(start_date, end_date);
+    if (endDate) {
+      query += ' AND date <= ?';
+      params.push(endDate);
     }
-
-    const trends = await query<{ date: string; total: number }>(
-      `SELECT date, SUM(amount) as total
-       FROM expenses
-       WHERE user_id = ? ${dateFilter}
-       GROUP BY date
-       ORDER BY date DESC`,
-      params
-    );
-
+    
+    query += ' GROUP BY period ORDER BY period';
+    
+    const trends = db.prepare(query).all(...params) as TrendData[];
     res.json(trends);
   } catch (error) {
-    logger.error('Get trends error:', error);
-    res.status(500).json({ message: 'Error fetching trends' });
+    res.status(500).json({ error: 'Failed to fetch trends' });
   }
 });
 
-// Get category spending
-router.get('/categories', authenticateToken, async (req: AuthRequest, res: Response): Promise<void> => {
+router.get('/categories', authenticateToken, (req: AuthRequest, res: Response): void => {
   try {
-    if (!req.user) {
-      res.status(401).json({ message: 'Not authenticated' });
-      return;
+    const { startDate, endDate } = req.query as AnalyticsQueryParams;
+    const db = getDb();
+    
+    let query: string = `
+      SELECT 
+        c.id,
+        c.name,
+        c.color,
+        c.icon,
+        COUNT(e.id) as expense_count,
+        COALESCE(SUM(e.amount), 0) as total_spent,
+        COALESCE(AVG(e.amount), 0) as average_expense
+      FROM categories c
+      LEFT JOIN expenses e ON c.id = e.category_id AND e.user_id = ?
+    `;
+    const params: (string | number | undefined)[] = [req.userId];
+    
+    if (startDate) {
+      query += ' AND e.date >= ?';
+      params.push(startDate);
     }
-
-    const { start_date, end_date } = req.query as AnalyticsQueryParams;
-
-    let dateFilter = '';
-    const params: any[] = [req.user.id];
-
-    if (start_date && end_date) {
-      dateFilter = 'AND e.date BETWEEN ? AND ?';
-      params.push(start_date, end_date);
+    if (endDate) {
+      query += ' AND e.date <= ?';
+      params.push(endDate);
     }
-
-    const categorySpending = await query<CategorySpending>(
-      `SELECT c.id as category_id, c.name as category_name, c.color as category_color,
-              COALESCE(SUM(e.amount), 0) as total_spent
-       FROM categories c
-       LEFT JOIN expenses e ON e.category_id = c.id AND e.user_id = ? ${dateFilter}
-       WHERE c.user_id = ?
-       GROUP BY c.id
-       HAVING total_spent > 0
-       ORDER BY total_spent DESC`,
-      [...params, req.user.id]
-    );
-
-    res.json(categorySpending);
+    
+    query += ' WHERE c.user_id = ? GROUP BY c.id ORDER BY total_spent DESC';
+    params.push(req.userId);
+    
+    const categories = db.prepare(query).all(...params);
+    res.json(categories);
   } catch (error) {
-    logger.error('Get category spending error:', error);
-    res.status(500).json({ message: 'Error fetching category spending' });
+    res.status(500).json({ error: 'Failed to fetch category analytics' });
   }
 });
 

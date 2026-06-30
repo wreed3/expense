@@ -1,143 +1,128 @@
-import express, { Response } from 'express';
+import { Router, Response } from 'express';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
-import { getDatabase } from '../utils/db';
-import { authenticateToken, AuthRequest } from '../middleware/auth';
-import Database from 'better-sqlite3';
-import { Pool } from 'pg';
+import { getDb } from '../utils/db.js';
+import { authenticateToken } from '../middleware/auth.js';
+import type { AuthRequest, RegisterBody, LoginBody } from '../types/express.js';
 
-const router = express.Router();
-const DB_TYPE = process.env.DB_TYPE || 'sqlite';
+const router: Router = Router();
 
-// Validation schemas
 const registerSchema = z.object({
-  email: z.string().email('Invalid email format'),
-  password: z.string().min(8, 'Password must be at least 8 characters'),
-  name: z.string().optional(),
+  email: z.string().email(),
+  password: z.string().min(6),
+  name: z.string().min(1),
 });
 
 const loginSchema = z.object({
-  email: z.string().email('Invalid email format'),
-  password: z.string().min(1, 'Password is required'),
+  email: z.string().email(),
+  password: z.string().min(1),
 });
 
-// Register endpoint
-router.post('/register', async (req, res, next) => {
+interface User {
+  id: number;
+  email: string;
+  password: string;
+  name: string;
+  created_at: string;
+}
+
+router.post('/register', async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { email, password, name } = registerSchema.parse(req.body);
+    const { email, password, name } = registerSchema.parse(req.body) as RegisterBody;
     
-    const hashedPassword = await bcrypt.hash(password, 10);
-    const db = getDatabase();
+    const db = getDb();
     
-    let userId: number;
-    
-    if (DB_TYPE === 'postgres') {
-      const pool = db as Pool;
-      const result = await pool.query(
-        'INSERT INTO users (email, password, name) VALUES ($1, $2, $3) RETURNING id',
-        [email, hashedPassword, name || null]
-      );
-      userId = result.rows[0].id;
-    } else {
-      const sqlite = db as Database.Database;
-      const result = sqlite.prepare(
-        'INSERT INTO users (email, password, name) VALUES (?, ?, ?)'
-      ).run(email, hashedPassword, name || null);
-      userId = result.lastInsertRowid as number;
+    const existingUser = db.prepare('SELECT id FROM users WHERE email = ?').get(email) as User | undefined;
+    if (existingUser) {
+      res.status(400).json({ error: 'User already exists' });
+      return;
     }
     
-    const token = jwt.sign(
-      { userId, email, name },
-      process.env.JWT_SECRET!,
-      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
+    const hashedPassword: string = await bcrypt.hash(password, 10);
+    
+    const result = db.prepare(
+      'INSERT INTO users (email, password, name) VALUES (?, ?, ?)'
+    ).run(email, hashedPassword, name);
+    
+    const token: string = jwt.sign(
+      { userId: result.lastInsertRowid },
+      process.env.JWT_SECRET || 'your-secret-key',
+      { expiresIn: '7d' }
     );
     
     res.status(201).json({
       token,
-      user: { id: userId, email, name },
+      user: {
+        id: result.lastInsertRowid,
+        email,
+        name,
+      },
     });
   } catch (error) {
-    next(error);
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: error.errors });
+      return;
+    }
+    res.status(500).json({ error: 'Failed to register user' });
   }
 });
 
-// Login endpoint
-router.post('/login', async (req, res, next) => {
+router.post('/login', async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { email, password } = loginSchema.parse(req.body);
+    const { email, password } = loginSchema.parse(req.body) as LoginBody;
     
-    const db = getDatabase();
-    let user: any;
-    
-    if (DB_TYPE === 'postgres') {
-      const pool = db as Pool;
-      const result = await pool.query(
-        'SELECT * FROM users WHERE email = $1',
-        [email]
-      );
-      user = result.rows[0];
-    } else {
-      const sqlite = db as Database.Database;
-      user = sqlite.prepare('SELECT * FROM users WHERE email = ?').get(email);
-    }
+    const db = getDb();
+    const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email) as User | undefined;
     
     if (!user) {
-      return res.status(401).json({ error: 'Invalid credentials', code: 'INVALID_CREDENTIALS' });
+      res.status(401).json({ error: 'Invalid credentials' });
+      return;
     }
     
-    const isValidPassword = await bcrypt.compare(password, user.password);
-    
-    if (!isValidPassword) {
-      return res.status(401).json({ error: 'Invalid credentials', code: 'INVALID_CREDENTIALS' });
+    const validPassword: boolean = await bcrypt.compare(password, user.password);
+    if (!validPassword) {
+      res.status(401).json({ error: 'Invalid credentials' });
+      return;
     }
     
-    const token = jwt.sign(
-      { userId: user.id, email: user.email, name: user.name },
-      process.env.JWT_SECRET!,
-      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
+    const token: string = jwt.sign(
+      { userId: user.id },
+      process.env.JWT_SECRET || 'your-secret-key',
+      { expiresIn: '7d' }
     );
     
     res.json({
       token,
-      user: { 
-        id: user.id, 
-        email: user.email, 
-        name: user.name 
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
       },
     });
   } catch (error) {
-    next(error);
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: error.errors });
+      return;
+    }
+    res.status(500).json({ error: 'Failed to login' });
   }
 });
 
-// Get current user endpoint
-router.get('/me', authenticateToken, async (req: AuthRequest, res: Response, next) => {
+router.get('/me', authenticateToken, (req: AuthRequest, res: Response): void => {
   try {
-    const db = getDatabase();
-    let user: any;
-    
-    if (DB_TYPE === 'postgres') {
-      const pool = db as Pool;
-      const result = await pool.query(
-        'SELECT id, email, name, created_at FROM users WHERE id = $1',
-        [req.userId]
-      );
-      user = result.rows[0];
-    } else {
-      const sqlite = db as Database.Database;
-      user = sqlite.prepare(
-        'SELECT id, email, name, created_at FROM users WHERE id = ?'
-      ).get(req.userId);
-    }
+    const db = getDb();
+    const user = db.prepare('SELECT id, email, name, created_at FROM users WHERE id = ?')
+      .get(req.userId) as Omit<User, 'password'> | undefined;
     
     if (!user) {
-      return res.status(404).json({ error: 'User not found', code: 'USER_NOT_FOUND' });
+      res.status(404).json({ error: 'User not found' });
+      return;
     }
     
-    res.json({ user });
+    res.json(user);
   } catch (error) {
-    next(error);
+    res.status(500).json({ error: 'Failed to fetch user' });
   }
 });
 

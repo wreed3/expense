@@ -1,61 +1,39 @@
 import Database from 'better-sqlite3';
-import { Pool } from 'pg';
-import fs from 'fs';
-import path from 'path';
+import { logger } from './logger.js';
 
-const DB_TYPE = process.env.DB_TYPE || 'sqlite';
+let db: Database.Database | null = null;
 
-let db: Database.Database | Pool;
+export const initDb = (): Database.Database => {
+  if (db) {
+    return db;
+  }
 
-export function initializeDatabase() {
-  if (DB_TYPE === 'postgres') {
-    db = new Pool({
-      host: process.env.DB_HOST || 'localhost',
-      port: parseInt(process.env.DB_PORT || '5432'),
-      database: process.env.DB_NAME || 'expense_tracker',
-      user: process.env.DB_USER || 'postgres',
-      password: process.env.DB_PASSWORD || '',
-    });
-    console.log('Connected to PostgreSQL database');
-  } else {
-    const dbPath = process.env.DB_PATH || './expenses.db';
-    const dbDir = path.dirname(dbPath);
-    
-    // Ensure database directory exists
-    if (!fs.existsSync(dbDir)) {
-      fs.mkdirSync(dbDir, { recursive: true });
-    }
-    
+  const dbPath: string = process.env.DB_PATH || './expenses.db';
+  
+  try {
     db = new Database(dbPath);
     db.pragma('journal_mode = WAL');
     db.pragma('foreign_keys = ON');
-    console.log('Connected to SQLite database');
+    
+    logger.info(`Database initialized at ${dbPath}`);
+    return db;
+  } catch (error) {
+    logger.error('Failed to initialize database:', error);
+    throw error;
   }
-  
-  return db;
-}
+};
 
-export function getDatabase() {
+export const getDb = (): Database.Database => {
   if (!db) {
-    throw new Error('Database not initialized. Call initializeDatabase() first.');
+    throw new Error('Database not initialized. Call initDb() first.');
   }
   return db;
-}
+};
 
-export async function closeDatabase() {
+export const closeDb = (): void => {
   if (db) {
-    if (DB_TYPE === 'postgres') {
-      await (db as Pool).end();
-    } else {
-      (db as Database.Database).close();
-    }
+    db.close();
+    db = null;
+    logger.info('Database connection closed');
   }
-}
-
-export function isDatabaseInitialized(): boolean {
-  if (DB_TYPE === 'sqlite') {
-    const dbPath = process.env.DB_PATH || './expenses.db';
-    return fs.existsSync(dbPath);
-  }
-  return true; // For PostgreSQL, assume it's initialized
-}
+};
