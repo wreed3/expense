@@ -1,112 +1,80 @@
-import { Router, Response } from 'express';
+import express from 'express';
 import { getDb } from '../utils/db.js';
-import { authenticateToken } from '../middleware/auth.js';
-import type { AuthRequest, ExpenseQueryParams } from '../types/express.js';
+import { authenticate } from '../middleware/auth.js';
 
-const router: Router = Router();
+const router = express.Router();
 
-interface ExpenseExport {
-  id: number;
-  date: string;
-  description: string;
-  amount: number;
-  category_name: string;
-  is_recurring: number;
-  recurring_frequency: string | null;
-}
-
-router.get('/csv', authenticateToken, (req: AuthRequest, res: Response): void => {
+// Export to CSV
+router.get('/csv', authenticate, (req, res, next) => {
   try {
-    const { startDate, endDate, category } = req.query as ExpenseQueryParams;
     const db = getDb();
-    
-    let query: string = `
+    const { start_date, end_date, category_id } = req.query;
+
+    let query = `
       SELECT 
-        e.id,
         e.date,
-        e.description,
         e.amount,
-        c.name as category_name,
-        e.is_recurring,
-        e.recurring_frequency
+        e.description,
+        c.name as category,
+        e.notes
       FROM expenses e
       JOIN categories c ON e.category_id = c.id
       WHERE e.user_id = ?
     `;
-    const params: (string | number | undefined)[] = [req.userId];
-    
-    if (startDate) {
+    const params: any[] = [req.userId];
+
+    if (start_date) {
       query += ' AND e.date >= ?';
-      params.push(startDate);
+      params.push(start_date);
     }
-    if (endDate) {
+
+    if (end_date) {
       query += ' AND e.date <= ?';
-      params.push(endDate);
+      params.push(end_date);
     }
-    if (category) {
-      query += ' AND c.name = ?';
-      params.push(category);
+
+    if (category_id) {
+      query += ' AND e.category_id = ?';
+      params.push(category_id);
     }
-    
+
     query += ' ORDER BY e.date DESC';
-    
-    const expenses = db.prepare(query).all(...params) as ExpenseExport[];
-    
-    const csv: string = [
-      'Date,Description,Amount,Category,Recurring,Frequency',
-      ...expenses.map((e: ExpenseExport) => 
-        `${e.date},"${e.description}",${e.amount},${e.category_name},${e.is_recurring ? 'Yes' : 'No'},${e.recurring_frequency || ''}`
-      )
-    ].join('\n');
-    
+
+    const expenses = db.prepare(query).all(...params) as any[];
+
+    // Generate CSV
+    const headers = ['Date', 'Amount', 'Description', 'Category', 'Notes'];
+    const csvRows = [
+      headers.join(','),
+      ...expenses.map(exp => [
+        exp.date,
+        exp.amount,
+        `"${exp.description.replace(/"/g, '""')}"`,
+        `"${exp.category.replace(/"/g, '""')}"`,
+        exp.notes ? `"${exp.notes.replace(/"/g, '""')}"` : ''
+      ].join(','))
+    ];
+
+    const csv = csvRows.join('\n');
+
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', 'attachment; filename=expenses.csv');
     res.send(csv);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to export expenses' });
+    next(error);
   }
 });
 
-router.get('/pdf', authenticateToken, (req: AuthRequest, res: Response): void => {
+// Export to PDF (placeholder - would need a PDF library)
+router.get('/pdf', authenticate, (req, res, next) => {
   try {
-    const { startDate, endDate, category } = req.query as ExpenseQueryParams;
-    const db = getDb();
-    
-    let query: string = `
-      SELECT 
-        e.date,
-        e.description,
-        e.amount,
-        c.name as category_name
-      FROM expenses e
-      JOIN categories c ON e.category_id = c.id
-      WHERE e.user_id = ?
-    `;
-    const params: (string | number | undefined)[] = [req.userId];
-    
-    if (startDate) {
-      query += ' AND e.date >= ?';
-      params.push(startDate);
-    }
-    if (endDate) {
-      query += ' AND e.date <= ?';
-      params.push(endDate);
-    }
-    if (category) {
-      query += ' AND c.name = ?';
-      params.push(category);
-    }
-    
-    query += ' ORDER BY e.date DESC';
-    
-    const expenses = db.prepare(query).all(...params) as ExpenseExport[];
-    
-    res.json({
-      message: 'PDF generation should be handled on the client side using jsPDF',
-      data: expenses
+    // This would require a PDF generation library like pdfkit or puppeteer
+    res.status(501).json({ 
+      error: 'PDF export not yet implemented',
+      message: 'Use CSV export or implement PDF generation on the client side'
     });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch expenses for PDF' });
+    next(error);
   }
 });
 

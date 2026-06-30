@@ -1,36 +1,40 @@
 import Database from 'better-sqlite3';
 import { logger } from './logger.js';
+import { runMigrations } from '../migrations/init.js';
 
 let db: Database.Database | null = null;
 
-export const initDb = (): Database.Database => {
+export const initDatabase = async () => {
   if (db) {
     return db;
   }
 
-  const dbPath: string = process.env.DB_PATH || './expenses.db';
-  
-  try {
+  const dbType = process.env.DB_TYPE || 'sqlite';
+
+  if (dbType === 'sqlite') {
+    const dbPath = process.env.DB_PATH || './expenses.db';
     db = new Database(dbPath);
     db.pragma('journal_mode = WAL');
-    db.pragma('foreign_keys = ON');
     
-    logger.info(`Database initialized at ${dbPath}`);
+    logger.info(`Connected to SQLite database: ${dbPath}`);
+    
+    // Run migrations
+    await runMigrations(db);
+    
     return db;
-  } catch (error) {
-    logger.error('Failed to initialize database:', error);
-    throw error;
+  } else {
+    throw new Error('PostgreSQL support not yet implemented');
   }
 };
 
 export const getDb = (): Database.Database => {
   if (!db) {
-    throw new Error('Database not initialized. Call initDb() first.');
+    throw new Error('Database not initialized. Call initDatabase() first.');
   }
   return db;
 };
 
-export const closeDb = (): void => {
+export const closeDatabase = () => {
   if (db) {
     db.close();
     db = null;
