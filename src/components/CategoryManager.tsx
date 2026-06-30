@@ -1,162 +1,216 @@
-import { useState } from 'react';
-import { Plus, Pencil, Trash2 } from 'lucide-react';
-import { useCategoryStore } from '../stores/categoryStore';
-import { Button } from './ui/button';
-import { Input } from './ui/input';
-import { Label } from './ui/label';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from './ui/dialog';
-import toast from 'react-hot-toast';
+import React, { useState, FormEvent } from 'react';
+import { Plus, Pencil, Trash2, X } from 'lucide-react';
+import type { Category, CategoryFormData } from '../types';
 
-export function CategoryManager() {
-  const { categories, addCategory, updateCategory, deleteCategory } = useCategoryStore();
-  const [isOpen, setIsOpen] = useState(false);
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [name, setName] = useState('');
-  const [color, setColor] = useState('#3b82f6');
+interface CategoryManagerProps {
+  categories: Category[];
+  onCreateCategory: (data: CategoryFormData) => Promise<Category | null>;
+  onUpdateCategory: (id: number, data: CategoryFormData) => Promise<Category | null>;
+  onDeleteCategory: (id: number) => Promise<boolean>;
+}
 
-  const handleSubmit = async (e: React.FormEvent) => {
+const PRESET_COLORS: string[] = [
+  '#EF4444', '#F59E0B', '#10B981', '#3B82F6', '#6366F1',
+  '#8B5CF6', '#EC4899', '#14B8A6', '#F97316', '#84CC16',
+];
+
+export const CategoryManager: React.FC<CategoryManagerProps> = ({
+  categories,
+  onCreateCategory,
+  onUpdateCategory,
+  onDeleteCategory,
+}) => {
+  const [isFormOpen, setIsFormOpen] = useState<boolean>(false);
+  const [editingCategory, setEditingCategory] = useState<Category | null>(null);
+  const [formData, setFormData] = useState<CategoryFormData>({
+    name: '',
+    color: PRESET_COLORS[0],
+    icon: '',
+  });
+  const [loading, setLoading] = useState<boolean>(false);
+
+  const resetForm = (): void => {
+    setFormData({
+      name: '',
+      color: PRESET_COLORS[0],
+      icon: '',
+    });
+    setEditingCategory(null);
+    setIsFormOpen(false);
+  };
+
+  const handleEdit = (category: Category): void => {
+    setEditingCategory(category);
+    setFormData({
+      name: category.name,
+      color: category.color,
+      icon: category.icon || '',
+    });
+    setIsFormOpen(true);
+  };
+
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>): Promise<void> => {
     e.preventDefault();
-    
+    setLoading(true);
+
     try {
-      if (editingId) {
-        await updateCategory(editingId, { name, color });
-        toast.success('Category updated');
+      if (editingCategory) {
+        await onUpdateCategory(editingCategory.id, formData);
       } else {
-        await addCategory({ name, color });
-        toast.success('Category created');
+        await onCreateCategory(formData);
       }
-      handleClose();
-    } catch (error) {
-      toast.error('Failed to save category');
+      resetForm();
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleEdit = (id: number, categoryName: string, categoryColor: string) => {
-    setEditingId(id);
-    setName(categoryName);
-    setColor(categoryColor);
-    setIsOpen(true);
-  };
-
-  const handleDelete = async (id: number) => {
-    if (confirm('Are you sure you want to delete this category?')) {
-      try {
-        await deleteCategory(id);
-        toast.success('Category deleted');
-      } catch (error) {
-        toast.error('Failed to delete category');
-      }
+  const handleDelete = async (id: number): Promise<void> => {
+    if (window.confirm('Are you sure you want to delete this category?')) {
+      await onDeleteCategory(id);
     }
-  };
-
-  const handleClose = () => {
-    setIsOpen(false);
-    setEditingId(null);
-    setName('');
-    setColor('#3b82f6');
   };
 
   return (
-    <div className="bg-white p-6 rounded-lg shadow-sm">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold">Categories</h3>
-        <Dialog open={isOpen} onOpenChange={setIsOpen}>
-          <DialogTrigger asChild>
-            <Button size="sm">
-              <Plus className="h-4 w-4 mr-1" />
-              Add
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>{editingId ? 'Edit Category' : 'New Category'}</DialogTitle>
-              <DialogDescription>
-                {editingId ? 'Update the category details' : 'Create a new category for organizing expenses'}
-              </DialogDescription>
-            </DialogHeader>
-            <form onSubmit={handleSubmit}>
-              <div className="space-y-4">
-                <div>
-                  <Label htmlFor="name">Name</Label>
-                  <Input
-                    id="name"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="Category name"
-                    required
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="color">Color</Label>
-                  <div className="flex gap-2">
-                    <Input
-                      id="color"
-                      type="color"
-                      value={color}
-                      onChange={(e) => setColor(e.target.value)}
-                      className="w-20 h-10"
-                    />
-                    <Input
-                      value={color}
-                      onChange={(e) => setColor(e.target.value)}
-                      placeholder="#3b82f6"
-                    />
-                  </div>
-                </div>
-              </div>
-              <DialogFooter className="mt-6">
-                <Button type="button" variant="outline" onClick={handleClose}>
-                  Cancel
-                </Button>
-                <Button type="submit">
-                  {editingId ? 'Update' : 'Create'}
-                </Button>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h2 className="text-2xl font-bold text-gray-900">Categories</h2>
+        <button
+          onClick={() => setIsFormOpen(true)}
+          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+        >
+          <Plus className="w-4 h-4" />
+          Add Category
+        </button>
       </div>
 
-      <div className="space-y-2">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {categories.map((category) => (
           <div
             key={category.id}
-            className="flex items-center justify-between p-3 rounded-lg border hover:bg-gray-50"
+            className="bg-white rounded-lg shadow-sm border border-gray-200 p-4"
           >
-            <div className="flex items-center gap-3">
-              <div
-                className="w-4 h-4 rounded-full"
-                style={{ backgroundColor: category.color }}
-              />
-              <span className="font-medium">{category.name}</span>
-            </div>
-            <div className="flex gap-1">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => handleEdit(category.id, category.name, category.color)}
-              >
-                <Pencil className="h-4 w-4" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => handleDelete(category.id)}
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-3">
+                <span
+                  className="w-8 h-8 rounded-full flex items-center justify-center"
+                  style={{ backgroundColor: category.color }}
+                >
+                  {category.icon && (
+                    <span className="text-white text-sm">{category.icon}</span>
+                  )}
+                </span>
+                <div>
+                  <h3 className="font-semibold text-gray-900">{category.name}</h3>
+                  <p className="text-xs text-gray-500">{category.color}</p>
+                </div>
+              </div>
+              <div className="flex gap-1">
+                <button
+                  onClick={() => handleEdit(category)}
+                  className="p-1 text-blue-600 hover:bg-blue-50 rounded"
+                >
+                  <Pencil className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => handleDelete(category.id)}
+                  className="p-1 text-red-600 hover:bg-red-50 rounded"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
             </div>
           </div>
         ))}
       </div>
+
+      {isFormOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+            <div className="flex items-center justify-between p-6 border-b">
+              <h2 className="text-xl font-semibold">
+                {editingCategory ? 'Edit Category' : 'Add Category'}
+              </h2>
+              <button
+                onClick={resetForm}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmit} className="p-6 space-y-4">
+              <div>
+                <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-1">
+                  Name
+                </label>
+                <input
+                  type="text"
+                  id="name"
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  required
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Color
+                </label>
+                <div className="grid grid-cols-5 gap-2">
+                  {PRESET_COLORS.map((color) => (
+                    <button
+                      key={color}
+                      type="button"
+                      onClick={() => setFormData({ ...formData, color })}
+                      className={`w-10 h-10 rounded-full border-2 ${
+                        formData.color === color
+                          ? 'border-gray-900 scale-110'
+                          : 'border-transparent'
+                      }`}
+                      style={{ backgroundColor: color }}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label htmlFor="icon" className="block text-sm font-medium text-gray-700 mb-1">
+                  Icon (optional emoji)
+                </label>
+                <input
+                  type="text"
+                  id="icon"
+                  value={formData.icon}
+                  onChange={(e) => setFormData({ ...formData, icon: e.target.value })}
+                  maxLength={2}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="🍔"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <button
+                  type="button"
+                  onClick={resetForm}
+                  className="flex-1 px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                  disabled={loading}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+                  disabled={loading}
+                >
+                  {loading ? 'Saving...' : editingCategory ? 'Update' : 'Create'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
-}
+};

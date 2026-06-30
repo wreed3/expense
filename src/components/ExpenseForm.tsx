@@ -1,239 +1,196 @@
-import { useState, useEffect } from 'react';
-import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { createExpense, updateExpense } from '@/store/slices/expensesSlice';
-import { fetchCategories } from '@/store/slices/categoriesSlice';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Calendar } from '@/components/ui/calendar';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { cn } from '@/lib/utils';
-import { format } from 'date-fns';
-import { CalendarIcon, Upload } from 'lucide-react';
-import toast from 'react-hot-toast';
-import type { Expense } from '@/store/slices/expensesSlice';
+import React, { useState, FormEvent } from 'react';
+import { X } from 'lucide-react';
+import type { Category, ExpenseFormData, Expense } from '../types';
 
 interface ExpenseFormProps {
-  expense?: Expense;
-  onSuccess?: () => void;
-  onCancel?: () => void;
+  categories: Category[];
+  onSubmit: (data: ExpenseFormData) => Promise<Expense | null>;
+  onClose: () => void;
+  initialData?: Expense;
 }
 
-export default function ExpenseForm({ expense, onSuccess, onCancel }: ExpenseFormProps) {
-  const dispatch = useAppDispatch();
-  const { items: categories, loading: categoriesLoading } = useAppSelector((state) => state.categories);
-  
-  const [formData, setFormData] = useState({
-    amount: expense?.amount.toString() || '',
-    description: expense?.description || '',
-    category_id: expense?.category_id?.toString() || '',
-    date: expense?.date || new Date().toISOString().split('T')[0],
+export const ExpenseForm: React.FC<ExpenseFormProps> = ({
+  categories,
+  onSubmit,
+  onClose,
+  initialData,
+}) => {
+  const [formData, setFormData] = useState<ExpenseFormData>({
+    amount: initialData?.amount || 0,
+    category_id: initialData?.category_id || 0,
+    description: initialData?.description || '',
+    date: initialData?.date || new Date().toISOString().split('T')[0],
+    is_recurring: initialData?.is_recurring === 1,
+    recurring_frequency: initialData?.recurring_frequency || undefined,
   });
-  
-  const [receiptFile, setReceiptFile] = useState<File | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [calendarOpen, setCalendarOpen] = useState(false);
 
-  useEffect(() => {
-    if (categories.length === 0) {
-      dispatch(fetchCategories());
-    }
-  }, [dispatch, categories.length]);
+  const [loading, setLoading] = useState<boolean>(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>): Promise<void> => {
     e.preventDefault();
+    setLoading(true);
     
-    if (!formData.amount || !formData.description || !formData.category_id) {
-      toast.error('Please fill in all required fields');
-      return;
-    }
-
-    setIsSubmitting(true);
-
     try {
-      const expenseData = {
-        amount: parseFloat(formData.amount),
-        description: formData.description,
-        category_id: parseInt(formData.category_id),
-        date: formData.date,
-      };
-
-      if (expense) {
-        await dispatch(updateExpense({ id: expense.id, expense: expenseData })).unwrap();
-        toast.success('Expense updated successfully');
-      } else {
-        await dispatch(createExpense(expenseData)).unwrap();
-        toast.success('Expense created successfully');
-      }
-
-      // TODO: Handle receipt upload if receiptFile is present
-      if (receiptFile) {
-        // This would need a separate API call to upload the receipt
-        console.log('Receipt file:', receiptFile);
-      }
-
-      if (onSuccess) {
-        onSuccess();
-      }
-
-      // Reset form if creating new expense
-      if (!expense) {
-        setFormData({
-          amount: '',
-          description: '',
-          category_id: '',
-          date: new Date().toISOString().split('T')[0],
-        });
-        setReceiptFile(null);
-      }
-    } catch (error) {
-      toast.error(expense ? 'Failed to update expense' : 'Failed to create expense');
-      console.error('Error submitting expense:', error);
+      await onSubmit(formData);
+      onClose();
     } finally {
-      setIsSubmitting(false);
+      setLoading(false);
     }
   };
 
-  const handleChange = (field: string, value: string) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
-  };
-
-  const handleDateSelect = (date: Date | undefined) => {
-    if (date) {
-      setFormData(prev => ({ ...prev, date: format(date, 'yyyy-MM-dd') }));
-      setCalendarOpen(false);
-    }
-  };
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      setReceiptFile(e.target.files[0]);
-    }
+  const handleChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
+  ): void => {
+    const { name, value, type } = e.target;
+    
+    setFormData((prev) => ({
+      ...prev,
+      [name]: type === 'number' ? parseFloat(value) : 
+              type === 'checkbox' ? (e.target as HTMLInputElement).checked : 
+              value,
+    }));
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{expense ? 'Edit Expense' : 'Add New Expense'}</CardTitle>
-        <CardDescription>
-          {expense ? 'Update the expense details below' : 'Enter the details of your expense'}
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="amount">Amount *</Label>
-            <Input
-              id="amount"
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+      <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+        <div className="flex items-center justify-between p-6 border-b">
+          <h2 className="text-xl font-semibold">
+            {initialData ? 'Edit Expense' : 'Add Expense'}
+          </h2>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600"
+            type="button"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          <div>
+            <label htmlFor="amount" className="block text-sm font-medium text-gray-700 mb-1">
+              Amount
+            </label>
+            <input
               type="number"
+              id="amount"
+              name="amount"
+              value={formData.amount || ''}
+              onChange={handleChange}
               step="0.01"
-              placeholder="0.00"
-              value={formData.amount}
-              onChange={(e) => handleChange('amount', e.target.value)}
+              min="0"
               required
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="description">Description *</Label>
-            <Textarea
-              id="description"
-              placeholder="What was this expense for?"
-              value={formData.description}
-              onChange={(e) => handleChange('description', e.target.value)}
-              required
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="category">Category *</Label>
-            <Select
+          <div>
+            <label htmlFor="category_id" className="block text-sm font-medium text-gray-700 mb-1">
+              Category
+            </label>
+            <select
+              id="category_id"
+              name="category_id"
               value={formData.category_id}
-              onValueChange={(value) => handleChange('category_id', value)}
-              disabled={categoriesLoading}
+              onChange={handleChange}
+              required
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
-              <SelectTrigger>
-                <SelectValue placeholder="Select a category" />
-              </SelectTrigger>
-              <SelectContent>
-                {categories.map((category) => (
-                  <SelectItem key={category.id} value={category.id.toString()}>
-                    <div className="flex items-center gap-2">
-                      <div
-                        className="w-3 h-3 rounded-full"
-                        style={{ backgroundColor: category.color }}
-                      />
-                      {category.name}
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              <option value="">Select a category</option>
+              {categories.map((category) => (
+                <option key={category.id} value={category.id}>
+                  {category.name}
+                </option>
+              ))}
+            </select>
           </div>
 
-          <div className="space-y-2">
-            <Label>Date *</Label>
-            <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
-              <PopoverTrigger asChild>
-                <Button
-                  variant="outline"
-                  className={cn(
-                    'w-full justify-start text-left font-normal',
-                    !formData.date && 'text-muted-foreground'
-                  )}
-                >
-                  <CalendarIcon className="mr-2 h-4 w-4" />
-                  {formData.date ? format(new Date(formData.date), 'PPP') : <span>Pick a date</span>}
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-auto p-0">
-                <Calendar
-                  mode="single"
-                  selected={formData.date ? new Date(formData.date) : undefined}
-                  onSelect={handleDateSelect}
-                  initialFocus
-                />
-              </PopoverContent>
-            </Popover>
+          <div>
+            <label htmlFor="description" className="block text-sm font-medium text-gray-700 mb-1">
+              Description
+            </label>
+            <textarea
+              id="description"
+              name="description"
+              value={formData.description}
+              onChange={handleChange}
+              required
+              rows={3}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="receipt">Receipt (Optional)</Label>
-            <div className="flex items-center gap-2">
-              <Input
-                id="receipt"
-                type="file"
-                accept="image/*,.pdf"
-                onChange={handleFileChange}
-                className="hidden"
-              />
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => document.getElementById('receipt')?.click()}
-                className="w-full"
+          <div>
+            <label htmlFor="date" className="block text-sm font-medium text-gray-700 mb-1">
+              Date
+            </label>
+            <input
+              type="date"
+              id="date"
+              name="date"
+              value={formData.date}
+              onChange={handleChange}
+              required
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          <div className="flex items-center">
+            <input
+              type="checkbox"
+              id="is_recurring"
+              name="is_recurring"
+              checked={formData.is_recurring}
+              onChange={handleChange}
+              className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+            />
+            <label htmlFor="is_recurring" className="ml-2 text-sm text-gray-700">
+              Recurring expense
+            </label>
+          </div>
+
+          {formData.is_recurring && (
+            <div>
+              <label htmlFor="recurring_frequency" className="block text-sm font-medium text-gray-700 mb-1">
+                Frequency
+              </label>
+              <select
+                id="recurring_frequency"
+                name="recurring_frequency"
+                value={formData.recurring_frequency || ''}
+                onChange={handleChange}
+                required={formData.is_recurring}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-                <Upload className="mr-2 h-4 w-4" />
-                {receiptFile ? receiptFile.name : 'Upload Receipt'}
-              </Button>
+                <option value="">Select frequency</option>
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+                <option value="yearly">Yearly</option>
+              </select>
             </div>
-          </div>
+          )}
 
-          <div className="flex gap-2 pt-4">
-            <Button type="submit" disabled={isSubmitting} className="flex-1">
-              {isSubmitting ? 'Saving...' : expense ? 'Update Expense' : 'Add Expense'}
-            </Button>
-            {onCancel && (
-              <Button type="button" variant="outline" onClick={onCancel}>
-                Cancel
-              </Button>
-            )}
+          <div className="flex gap-3 pt-4">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+              disabled={loading}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+              disabled={loading}
+            >
+              {loading ? 'Saving...' : initialData ? 'Update' : 'Create'}
+            </button>
           </div>
         </form>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
-}
+};

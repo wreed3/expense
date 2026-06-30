@@ -1,112 +1,114 @@
 import React from 'react';
-import { formatCurrency, formatPercentage } from '../utils/formatters';
-
-interface Budget {
-  id: number;
-  amount: number;
-  spent: number;
-  remaining: number;
-  percentage: number;
-  month: string;
-  alert_threshold: number;
-  category: {
-    id: number;
-    name: string;
-    color: string;
-    icon?: string;
-  };
-}
+import { AlertCircle, CheckCircle, TrendingUp } from 'lucide-react';
+import type { Budget } from '../types';
 
 interface BudgetCardProps {
   budget: Budget;
+  onEdit: (budget: Budget) => void;
+  onDelete: (id: number) => void;
 }
 
-export const BudgetCard: React.FC<BudgetCardProps> = ({ budget }) => {
-  const getProgressColor = () => {
-    if (budget.percentage >= 100) return 'bg-red-500';
-    if (budget.percentage >= budget.alert_threshold * 100) return 'bg-yellow-500';
+export const BudgetCard: React.FC<BudgetCardProps> = ({
+  budget,
+  onEdit,
+  onDelete,
+}) => {
+  const spent: number = budget.spent || 0;
+  const percentage: number = (spent / budget.amount) * 100;
+  const remaining: number = budget.amount - spent;
+  const isOverBudget: boolean = spent > budget.amount;
+  const isNearLimit: boolean = percentage >= 80 && !isOverBudget;
+
+  const formatCurrency = (amount: number): string => {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+    }).format(amount);
+  };
+
+  const getStatusColor = (): string => {
+    if (isOverBudget) return 'text-red-600';
+    if (isNearLimit) return 'text-yellow-600';
+    return 'text-green-600';
+  };
+
+  const getProgressColor = (): string => {
+    if (isOverBudget) return 'bg-red-500';
+    if (isNearLimit) return 'bg-yellow-500';
     return 'bg-green-500';
   };
 
-  const getStatusText = () => {
-    if (budget.percentage >= 100) return 'Over budget';
-    if (budget.percentage >= budget.alert_threshold * 100) return 'Approaching limit';
-    return 'On track';
-  };
-
-  const formatMonth = (monthStr: string) => {
-    const [year, month] = monthStr.split('-');
-    const date = new Date(parseInt(year), parseInt(month) - 1);
-    return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  const getStatusIcon = (): React.ReactNode => {
+    if (isOverBudget) return <AlertCircle className="w-5 h-5" />;
+    if (isNearLimit) return <TrendingUp className="w-5 h-5" />;
+    return <CheckCircle className="w-5 h-5" />;
   };
 
   return (
-    <div className="bg-white rounded-lg shadow p-6">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center space-x-3">
-          <div
-            className="w-12 h-12 rounded-full flex items-center justify-center text-2xl"
-            style={{ backgroundColor: budget.category.color + '20' }}
-          >
-            {budget.category.icon || '💰'}
-          </div>
-          <div>
-            <h3
-              className="font-semibold text-lg"
-              style={{ backgroundColor: budget.category.color, color: 'white', padding: '2px 8px', borderRadius: '4px' }}
-            >
-              {budget.category.name}
-            </h3>
-            <p className="text-sm text-gray-600">{formatMonth(budget.month)}</p>
-          </div>
-        </div>
-        <div className="text-right">
-          <p className="text-2xl font-bold text-gray-900">{formatCurrency(budget.amount)}</p>
-          <p className="text-sm text-gray-600">Budget</p>
-        </div>
-      </div>
-
-      <div className="space-y-2">
-        <div className="flex justify-between text-sm">
-          <span className="text-gray-600">Spent</span>
-          <span className="font-semibold">{formatCurrency(budget.spent)}</span>
-        </div>
-        <div className="flex justify-between text-sm">
-          <span className="text-gray-600">Remaining</span>
-          <span className="font-semibold">
-            {budget.remaining < 0 ? '-' : ''}{formatCurrency(Math.abs(budget.remaining))}
-          </span>
-        </div>
-      </div>
-
-      <div className="mt-4">
-        <div className="flex justify-between items-center mb-2">
-          <span className="text-sm font-medium text-gray-700">{getStatusText()}</span>
-          <span className="text-sm font-semibold">{formatPercentage(budget.percentage / 100)}</span>
-        </div>
-        <div className="w-full bg-gray-200 rounded-full h-3" role="progressbar" aria-valuenow={budget.percentage} aria-valuemin={0} aria-valuemax={100}>
-          <div
-            className={`h-3 rounded-full transition-all ${getProgressColor()}`}
-            style={{ width: `${Math.min(budget.percentage, 100)}%` }}
+    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+      <div className="flex items-start justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <span
+            className="w-4 h-4 rounded-full"
+            style={{ backgroundColor: budget.category_color }}
           />
+          <h3 className="text-lg font-semibold text-gray-900">
+            {budget.category_name}
+          </h3>
+        </div>
+        <div className={`flex items-center gap-1 ${getStatusColor()}`}>
+          {getStatusIcon()}
         </div>
       </div>
 
-      {budget.percentage >= 100 && (
-        <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-md">
-          <p className="text-sm text-red-800">
-            ⚠️ Over budget by {formatCurrency(Math.abs(budget.remaining))}
-          </p>
+      <div className="space-y-4">
+        <div>
+          <div className="flex items-center justify-between text-sm mb-2">
+            <span className="text-gray-600">
+              {formatCurrency(spent)} of {formatCurrency(budget.amount)}
+            </span>
+            <span className={getStatusColor()}>
+              {percentage.toFixed(0)}%
+            </span>
+          </div>
+          <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+            <div
+              className={`h-2 rounded-full transition-all ${getProgressColor()}`}
+              style={{ width: `${Math.min(percentage, 100)}%` }}
+            />
+          </div>
         </div>
-      )}
 
-      {budget.percentage >= budget.alert_threshold * 100 && budget.percentage < 100 && (
-        <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
-          <p className="text-sm text-yellow-800">
-            ⚠️ Approaching limit - {formatCurrency(budget.remaining)} remaining
-          </p>
+        <div className="flex items-center justify-between pt-2 border-t border-gray-200">
+          <div>
+            <p className="text-sm text-gray-600">Remaining</p>
+            <p className={`text-lg font-semibold ${
+              remaining < 0 ? 'text-red-600' : 'text-gray-900'
+            }`}>
+              {formatCurrency(Math.abs(remaining))}
+              {remaining < 0 && ' over'}
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => onEdit(budget)}
+              className="px-3 py-1 text-sm text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
+            >
+              Edit
+            </button>
+            <button
+              onClick={() => onDelete(budget.id)}
+              className="px-3 py-1 text-sm text-red-600 hover:bg-red-50 rounded-md transition-colors"
+            >
+              Delete
+            </button>
+          </div>
         </div>
-      )}
+
+        <div className="text-xs text-gray-500">
+          Period: {budget.period === 'monthly' ? 'Monthly' : 'Yearly'}
+        </div>
+      </div>
     </div>
   );
 };
